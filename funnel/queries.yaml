@@ -1,0 +1,8 @@
+# Remote is where the real inventory is; Austin returns near-nothing for this
+# profile. Keep one Austin+hybrid query anyway for local roles (often empty).
+queries:
+  - {q: "software engineer react", l: "Remote", fromage: 1, sort: date}
+  - {q: "frontend engineer", l: "Remote", fromage: 1, sort: date}
+  - {q: "full stack typescript", l: "Remote", fromage: 1, sort: date}
+  - {q: "ai engineer", l: "Remote", fromage: 1, sort: date}
+  - {q: "senior frontend engineer", l: "Austin, TX", fromage: 3, sort: date}

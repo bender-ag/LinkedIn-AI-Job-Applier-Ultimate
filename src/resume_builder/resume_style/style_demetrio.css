@@ -1,112 +1,146 @@
 /*Demetrio$https://dmetr.io*/
+:root {
+  --accent: #b0432f;
+  --ink: #3d3d3d;
+  --ink-strong: #1f1f1f;
+  --muted: #8a8a8a;
+  --rule: #dcd8d2;
+}
+
 body {
-  font-family: "Avenir Next", "Nunito Sans", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-  font-size: 10.5pt;
-  line-height: 1.35;
-  color: #111;
+  font-family: "Avenir Next", "Nunito Sans", "Lato", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-size: 10pt;
+  line-height: 1.4;
+  color: var(--ink);
   background: #fff;
   margin: 0 auto;
-  max-width: 7.6in;
-  padding: 0.45in 0.15in;
+  max-width: 7.9in;
+  padding: 0.1in 0.15in;
+}
+
+header {
+  margin-bottom: 8px;
 }
 
 h1 {
-  font-size: 20pt;
+  font-size: 26pt;
   font-weight: 700;
+  color: var(--accent);
   margin: 0 0 2px 0;
   letter-spacing: 0.2px;
 }
 
+.subtitle {
+  font-size: 12.5pt;
+  font-weight: 400;
+  color: var(--ink);
+  margin: 0 0 4px 0;
+}
+
 .contact-info {
-  margin: 0 0 14px 0;
-  font-size: 9.5pt;
-  color: #222;
+  margin: 0 0 10px 0;
+  font-size: 9pt;
+  color: var(--muted);
 }
 
 .contact-info p,
+.contact-info .contact-links,
 .contact-info .contact-links p {
   display: inline;
   margin: 0;
 }
 
 .contact-info p + p::before,
-.contact-links p + p::before {
+.contact-links p + p::before,
+.contact-info .contact-links p:first-child::before {
   content: "  \2022  ";
-  color: #555;
+  color: var(--accent);
 }
 
-.contact-info span {
-  color: #222;
-}
-
+.contact-info span,
 .contact-info a {
-  color: #222;
+  color: var(--muted);
   text-decoration: none;
 }
 
 section {
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 h2 {
-  font-size: 10.5pt;
+  font-size: 9.5pt;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 1.2px;
-  margin: 14px 0 6px 0;
-  padding: 0;
-  border: none;
-  color: #111;
+  letter-spacing: 1.6px;
+  color: var(--accent);
+  margin: 12px 0 4px 0;
+  padding: 0 0 3px 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+#summary p {
+  margin: 6px 0 0 0;
 }
 
 .entry {
-  margin-bottom: 10px;
+  margin-bottom: 9px;
 }
 
 .entry-header {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
+  margin-top: 8px;
 }
 
 .entry-name {
-  font-weight: 700;
-  font-size: 10.5pt;
+  font-weight: 400;
+  font-size: 11pt;
+  color: var(--ink-strong);
 }
 
 .entry-location {
   font-style: italic;
-  font-size: 9.5pt;
-  color: #333;
+  font-size: 9pt;
+  color: var(--muted);
 }
 
 .entry-details {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
+  gap: 12px;
 }
 
 .entry-title {
-  font-weight: 600;
+  font-weight: 700;
   font-size: 10pt;
+  color: var(--ink-strong);
 }
 
 .entry-year {
-  font-size: 9.5pt;
-  color: #333;
+  font-weight: 700;
+  font-size: 10pt;
+  color: var(--ink-strong);
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
 ul,
 ul.compact-list {
   margin: 4px 0 0 0;
-  padding-left: 18px;
+  padding-left: 20px;
 }
 
 ul li,
 ul.compact-list li {
-  margin-bottom: 3px;
+  margin-bottom: 4px;
   text-align: left;
+}
+
+ul li::marker,
+ul.compact-list li::marker {
+  color: var(--accent);
 }
 
 p {
@@ -114,13 +148,15 @@ p {
 }
 
 a {
-  color: #111;
+  color: var(--ink);
 }
 
 strong {
-  font-weight: 700;
+  font-weight: 600;
+  color: var(--ink-strong);
 }
 
 em {
   font-style: italic;
+  color: var(--muted);
 }

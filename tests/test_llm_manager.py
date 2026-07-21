@@ -1201,3 +1201,66 @@ class TestGPTAnswererIntegration:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestGenerateHtmlResume:
+    """Tests for resume section assembly: summary section and section order"""
+
+    @patch("src.llm.llm_manager.AIAdapter")
+    @patch("src.llm.llm_manager.LoggerChatModel")
+    def _make_answerer(self, mock_logger_chat, mock_ai_adapter, api_key="key", proxy=None):
+        return GPTAnswerer(api_key, proxy)
+
+    def _assemble(self, resume_structured):
+        answerer = self._make_answerer()
+        answerer.resume_structured = resume_structured
+        answerer.job_readable = "readable job"
+        answerer.load_resume_template = lambda name: "<header><h1>Name</h1></header>"
+        answerer.generate_education_section = lambda: '<section id="education">edu</section>'
+        answerer.generate_work_experience_section = (
+            lambda: '<section id="work-experience">work</section>'
+        )
+        answerer.generate_side_projects_section = (
+            lambda: '<section id="side-projects">projects</section>'
+        )
+        answerer.generate_achievements_section = lambda: ""
+        answerer.generate_certifications_section = lambda: ""
+        answerer.generate_additional_skills_section = (
+            lambda: '<section id="skills-languages">skills</section>'
+        )
+        return answerer.generate_html_resume()
+
+    def _base_resume(self, **overrides):
+        resume = {
+            "personal_information": {"name": "Test"},
+            "education_details": [{"school": "X"}],
+            "experience_details": [{"company": "Y"}],
+            "projects": [{"name": "Z"}],
+            "achievements": [],
+            "certifications": [],
+            "languages": [],
+            "interests": [],
+            "skills": ["python"],
+            "about_me": "",
+        }
+        resume.update(overrides)
+        return resume
+
+    def test_summary_section_rendered_when_present(self):
+        html = self._assemble(self._base_resume(summary="A short professional summary."))
+        assert '<section id="summary">' in html
+        assert "A short professional summary." in html
+        assert "<h2>Summary</h2>" in html
+
+    def test_summary_section_omitted_when_absent(self):
+        html = self._assemble(self._base_resume())
+        assert '<section id="summary">' not in html
+
+    def test_section_order_summary_first_education_last(self):
+        html = self._assemble(self._base_resume(summary="Summary text."))
+        i_summary = html.index('<section id="summary">')
+        i_work = html.index('<section id="work-experience">')
+        i_projects = html.index('<section id="side-projects">')
+        i_skills = html.index('<section id="skills-languages">')
+        i_edu = html.index('<section id="education">')
+        assert i_summary < i_work < i_projects < i_skills < i_edu

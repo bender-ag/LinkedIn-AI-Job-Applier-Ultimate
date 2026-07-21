@@ -206,6 +206,9 @@ class ResumeStructure(BaseModel):
     personal_information: PersonalInfo = Field(
         default_factory=PersonalInfo, description="Personal information"
     )
+    summary: Optional[str] = Field(
+        default=None, description="Professional summary paragraph shown at the top of the resume"
+    )
     education_details: List[EducationDetail] = Field(
         default_factory=list, description="Education details"
     )

@@ -1,3 +1,4 @@
+import html
 import os
 import re
 import textwrap
@@ -1469,7 +1470,7 @@ class GPTAnswerer:
                 return (
                     '<section id="summary">\n'
                     "  <h2>Summary</h2>\n"
-                    f"  <p>{summary}</p>\n"
+                    f"  <p>{html.escape(summary)}</p>\n"
                     "</section>"
                 )
             return ""

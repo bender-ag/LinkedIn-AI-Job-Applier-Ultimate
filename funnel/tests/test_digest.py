@@ -7,6 +7,7 @@ from pathlib import Path
 
 from funnel.digest import digest_jobs
 from funnel.merge import ensure_schema
+from funnel.score_match import score_match
 
 
 def _seed_db(db_path: Path, rows: list[dict]) -> None:
@@ -84,6 +85,13 @@ JD = (
     "as a Business Analyst, preferably in financial services."
 )
 
+LOW_MATCH_JD = (
+    "Warehouse associate needed for night shift packing and shipping. "
+    "Must lift fifty pounds, operate forklift, and load trucks. "
+    "Experience with inventory scanning guns preferred. No programming "
+    "or product management required. Fast paced distribution center."
+)
+
 
 def test_digest_writes_markdown_and_marks_digested(tmp_path: Path):
     db = tmp_path / "funnel.db"
@@ -114,8 +122,9 @@ def test_digest_writes_markdown_and_marks_digested(tmp_path: Path):
         ],
     )
 
-    n = digest_jobs(db, min_score=70, resume_path=resume, out_dir=out)
-    assert n == 1
+    # Default min_score is 0; both undigested rows render when score floor is 0.
+    n = digest_jobs(db, min_score=0, resume_path=resume, out_dir=out)
+    assert n == 2
 
     digests = list(out.glob("digest-*.md"))
     assert len(digests) == 1
@@ -129,29 +138,58 @@ def test_digest_writes_markdown_and_marks_digested(tmp_path: Path):
     assert "https://example.com/a" in text
     assert "Keyword score:" in text
     assert "Missing keywords:" in text
-    assert "Intern" not in text
+    # High kw_score job listed before low (Intern / short JD → score 0).
+    assert text.index("Senior BA") < text.index("Intern")
 
     assert _digested(db, "https://example.com/a") == 1
-    assert _digested(db, "https://example.com/low") == 0
+    assert _digested(db, "https://example.com/low") == 1
 
 
-def test_respects_min_score(tmp_path: Path):
+def test_min_score_filters_kw_score(tmp_path: Path):
     db = tmp_path / "funnel.db"
     out = tmp_path / "out"
+    resume = tmp_path / "resume_text.txt"
+    resume.write_text(RESUME, encoding="utf-8")
+
+    high = score_match(RESUME, JD).score
+    low = score_match(RESUME, LOW_MATCH_JD).score
+    assert high >= 70
+    assert low < 70
+
     _seed_db(
         db,
         [
             {
-                "url": "https://example.com/mid",
-                "job_title": "Mid",
-                "interest_score": 65,
-                "job_description": "x" * 200,
-            }
+                "url": "https://example.com/high",
+                "job_title": "High Match",
+                "job_description": JD,
+                "interest_score": 10,  # interest_score must not gate inclusion
+            },
+            {
+                "url": "https://example.com/lowkw",
+                "job_title": "Low Match",
+                "job_description": LOW_MATCH_JD,
+                "interest_score": 99,
+            },
         ],
     )
-    n = digest_jobs(db, min_score=70, resume_path=tmp_path / "missing.txt", out_dir=out)
-    assert n == 0
-    assert list(out.glob("digest-*.md")) == []
+
+    n = digest_jobs(db, min_score=70, resume_path=resume, out_dir=out)
+    assert n == 1
+    text = list(out.glob("digest-*.md"))[0].read_text(encoding="utf-8")
+    assert "High Match" in text
+    assert "Low Match" not in text
+    assert _digested(db, "https://example.com/high") == 1
+    assert _digested(db, "https://example.com/lowkw") == 0
+
+    # No resume → min_score ignored; both jobs included.
+    out2 = tmp_path / "out2"
+    conn = sqlite3.connect(db)
+    conn.execute("UPDATE jobs SET digested = 0")
+    conn.commit()
+    conn.close()
+    n2 = digest_jobs(db, min_score=70, resume_path=tmp_path / "missing.txt", out_dir=out2)
+    assert n2 == 2
 
 
 def test_missing_resume_note(tmp_path: Path):
@@ -169,14 +207,14 @@ def test_missing_resume_note(tmp_path: Path):
             }
         ],
     )
-    n = digest_jobs(db, min_score=70, resume_path=tmp_path / "nope.txt", out_dir=out)
+    n = digest_jobs(db, min_score=0, resume_path=tmp_path / "nope.txt", out_dir=out)
     assert n == 1
     text = (out / list(out.glob("digest-*.md"))[0]).read_text(encoding="utf-8")
     assert "resume_text.txt not found - keyword scoring skipped" in text
     assert "Keyword score:" not in text
 
 
-def test_appends_on_second_run_same_day(tmp_path: Path):
+def test_appends_on_second_md_run_same_day(tmp_path: Path):
     db = tmp_path / "funnel.db"
     out = tmp_path / "out"
     resume = tmp_path / "resume_text.txt"
@@ -201,7 +239,7 @@ def test_appends_on_second_run_same_day(tmp_path: Path):
             },
         ],
     )
-    digest_jobs(db, min_score=70, resume_path=resume, out_dir=out)
+    digest_jobs(db, min_score=0, resume_path=resume, out_dir=out)
     digests = list(out.glob("digest-*.md"))
     assert len(digests) == 1
     path = digests[0]
@@ -215,12 +253,54 @@ def test_appends_on_second_run_same_day(tmp_path: Path):
     conn.commit()
     conn.close()
 
-    digest_jobs(db, min_score=70, resume_path=resume, out_dir=out)
+    digest_jobs(db, min_score=0, resume_path=resume, out_dir=out)
     text = path.read_text(encoding="utf-8")
     assert "First Job" in text
     assert "Second Job" in text
     assert "## Run 2" in text
     assert len(list(out.glob("digest-*.md"))) == 1
+
+
+def test_html_two_runs_same_day_keeps_all_jobs(tmp_path: Path):
+    from funnel import digest as digest_mod
+
+    db = tmp_path / "funnel.db"
+    resume = tmp_path / "resume_text.txt"
+    resume.write_text(RESUME, encoding="utf-8")
+    _seed_db(
+        db,
+        [
+            {
+                "url": "https://example.com/batch1",
+                "job_title": "Batch One Role",
+                "company_name": "A",
+                "job_description": JD,
+                "interest_score": 0,
+            },
+        ],
+    )
+    digest_jobs(db, min_score=0, resume_path=resume, out_dir=tmp_path, fmt="html")
+    html1 = (tmp_path / f"digest-{digest_mod._today_str()}.html").read_text(encoding="utf-8")
+    assert "Batch One Role" in html1
+    # HTML must not mark digested — full board regenerates.
+    assert _digested(db, "https://example.com/batch1") == 0
+
+    _seed_db(
+        db,
+        [
+            {
+                "url": "https://example.com/batch2",
+                "job_title": "Batch Two Role",
+                "company_name": "B",
+                "job_description": JD,
+                "interest_score": 0,
+            },
+        ],
+    )
+    digest_jobs(db, min_score=0, resume_path=resume, out_dir=tmp_path, fmt="html")
+    html2 = (tmp_path / f"digest-{digest_mod._today_str()}.html").read_text(encoding="utf-8")
+    assert "Batch One Role" in html2
+    assert "Batch Two Role" in html2
 
 
 def test_zero_new_jobs(tmp_path: Path, capsys):
@@ -237,15 +317,13 @@ def test_zero_new_jobs(tmp_path: Path, capsys):
             }
         ],
     )
-    n = digest_jobs(db, min_score=70, resume_path=tmp_path / "r.txt", out_dir=out)
+    n = digest_jobs(db, min_score=0, resume_path=tmp_path / "r.txt", out_dir=out)
     assert n == 0
     assert "0 new jobs" in capsys.readouterr().out
     assert list(out.glob("digest-*.md")) == []
 
 
 def test_html_format_renders_and_sorts(tmp_path):
-    import sqlite3
-
     from funnel import digest as digest_mod
 
     db = tmp_path / "f.db"
@@ -275,6 +353,8 @@ def test_html_format_renders_and_sorts(tmp_path):
     assert "<!doctype html>" in html
     assert "React Engineer" in html
     assert "u1" in html
+    # HTML path must not mark digested
+    assert _digested(db, "u1") == 0
 
 
 def digest_mod_create_sql():

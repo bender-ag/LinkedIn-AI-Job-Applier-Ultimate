@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import logging
 import re
 import sys
@@ -25,6 +26,16 @@ NOISE_LABELS = {
     "Not interested",
     "matches your preference",
     "View similar jobs with this employer",
+}
+
+JOB_TYPE_LABELS = {
+    "Full-time",
+    "Part-time",
+    "Contract",
+    "Temporary",
+    "Internship",
+    "Full-time, Part-time",
+    "Part-time, Full-time",
 }
 
 CARD_HEADING_RE = re.compile(r'heading "full details of (.+)" level="3"')
@@ -78,7 +89,15 @@ def parse_job_cards(snapshot: str) -> list[dict]:
                 static_texts.append(text)
 
         company_name = static_texts[0] if static_texts else None
-        location = static_texts[1] if len(static_texts) > 1 else None
+
+        location = None
+        for text in static_texts[1:]:
+            if SALARY_RE.search(text):
+                continue
+            if text in JOB_TYPE_LABELS:
+                continue
+            location = text
+            break
 
         salary_range = None
         for text in static_texts:
@@ -143,6 +162,17 @@ def _build_search_url(query: dict[str, Any]) -> str:
     if query.get("sort"):
         params["sort"] = query["sort"]
     return "https://www.indeed.com/jobs?" + urlencode(params)
+
+
+def _job_identity(card: dict, url: str) -> str:
+    """Stable identity for a job card: real URL when present, else a synthetic id."""
+    if url:
+        return url
+    title = card.get("job_title") or ""
+    company = card.get("company_name") or ""
+    location = card.get("location") or ""
+    digest = hashlib.sha1(f"{title}|{company}|{location}".encode()).hexdigest()[:16]
+    return f"indeed:card:{digest}"
 
 
 def _to_interesting_job(card: dict[str, Any], *, url: str, job_description: str) -> dict[str, Any]:
@@ -216,13 +246,13 @@ def collect(
                     if open_details:
                         job_url, job_description = _fetch_detail(client, card.get("_uid"), settle)
 
-                    if job_url and job_url in seen_urls:
+                    identity = _job_identity(card, job_url)
+                    if identity in seen_urls:
                         continue
-                    if job_url:
-                        seen_urls.add(job_url)
+                    seen_urls.add(identity)
 
                     results.append(
-                        _to_interesting_job(card, url=job_url, job_description=job_description)
+                        _to_interesting_job(card, url=identity, job_description=job_description)
                     )
                 except Exception as exc:
                     logger.warning("card failed (%s): %s", card.get("job_title"), exc)

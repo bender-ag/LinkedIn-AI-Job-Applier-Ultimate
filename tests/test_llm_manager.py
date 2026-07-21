@@ -1252,6 +1252,15 @@ class TestGenerateHtmlResume:
         assert "A short professional summary." in html
         assert "<h2>Summary</h2>" in html
 
+    def test_summary_section_escapes_html(self):
+        html = self._assemble(
+            self._base_resume(summary="Led R&D and wrote <script>alert(1)</script>.")
+        )
+        assert "R&amp;D" in html
+        assert "&lt;script&gt;" in html
+        assert "<script>" not in html
+        assert "R&D" not in html
+
     def test_summary_section_omitted_when_absent(self):
         html = self._assemble(self._base_resume())
         assert '<section id="summary">' not in html

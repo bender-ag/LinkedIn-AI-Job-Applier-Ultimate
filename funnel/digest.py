@@ -14,8 +14,13 @@ from funnel.score_match import score_match
 DEFAULT_DB = Path("data/funnel.db")
 DEFAULT_RESUME = Path("data/resumes/resume_text.txt")
 DEFAULT_OUT_DIR = Path("/artifacts")
-DEFAULT_MIN_SCORE = 70
+DEFAULT_MIN_SCORE = 0
 MISSING_KEYWORDS_CAP = 15
+
+
+def _kw_sort_key(job: dict):
+    """Sort by keyword score desc; None scores last."""
+    return (job["kw_score"] is None, -(job["kw_score"] or 0))
 
 
 def _today_str() -> str:
@@ -110,7 +115,7 @@ def _esc(text: str) -> str:
 
 def render_html(jobs: list[dict], day: str, resume_note: str | None) -> str:
     """Self-contained, theme-aware HTML digest, sorted by keyword score desc."""
-    ordered = sorted(jobs, key=lambda j: (j["kw_score"] is None, -(j["kw_score"] or 0)))
+    ordered = sorted(jobs, key=_kw_sort_key)
     cards = []
     for j in ordered:
         badge = (
@@ -167,7 +172,7 @@ def digest_jobs(
     out_dir: Path = DEFAULT_OUT_DIR,
     fmt: str = "md",
 ) -> int:
-    """Write digest markdown for undigested jobs. Returns count written."""
+    """Write digest for jobs filtered/ordered by keyword score. Returns count written."""
     if not db_path.exists():
         print("0 new jobs")
         return 0
@@ -175,14 +180,10 @@ def digest_jobs(
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
-        rows = conn.execute(
-            """
-            SELECT * FROM jobs
-            WHERE digested = 0 AND interest_score >= ?
-            ORDER BY interest_score DESC
-            """,
-            (min_score,),
-        ).fetchall()
+        if fmt == "html":
+            rows = conn.execute("SELECT * FROM jobs").fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM jobs WHERE digested = 0").fetchall()
 
         if not rows:
             print("0 new jobs")
@@ -193,18 +194,31 @@ def digest_jobs(
         if resume_path.exists():
             resume_text = resume_path.read_text(encoding="utf-8")
         else:
+            # min_score ignored when no resume — keyword scoring skipped
             resume_note = "resume_text.txt not found - keyword scoring skipped"
+
+        scored = [_job_scored(row, resume_text) for row in rows]
+        if resume_text is not None:
+            scored = [j for j in scored if (j["kw_score"] or 0) >= min_score]
+        scored.sort(key=_kw_sort_key)
+
+        if not scored:
+            print("0 new jobs")
+            return 0
+
+        # Preserve row lookup by url for markdown formatting / digested marks.
+        row_by_url = {row["url"]: row for row in rows}
+        ordered_rows = [row_by_url[j["url"]] for j in scored]
 
         out_dir.mkdir(parents=True, exist_ok=True)
 
         if fmt == "html":
-            # HTML always renders the full current batch (no incremental append).
+            # Full current board — regenerate completely; do not mark digested.
             path = out_dir / f"digest-{_today_str()}.html"
-            jobs = [_job_scored(row, resume_text) for row in rows]
-            path.write_text(render_html(jobs, _today_str(), resume_note), encoding="utf-8")
+            path.write_text(render_html(scored, _today_str(), resume_note), encoding="utf-8")
         else:
             path = _digest_path(out_dir)
-            body = "\n".join(_format_job(row, resume_text) for row in rows)
+            body = "\n".join(_format_job(row, resume_text) for row in ordered_rows)
             if path.exists():
                 existing = path.read_text(encoding="utf-8")
                 heading = _next_run_heading(existing)
@@ -219,17 +233,17 @@ def digest_jobs(
                     header += f"{resume_note}\n\n"
                 path.write_text(header + body, encoding="utf-8")
 
-        urls = [row["url"] for row in rows]
-        conn.executemany(
-            "UPDATE jobs SET digested = 1 WHERE url = ?",
-            [(u,) for u in urls],
-        )
-        conn.commit()
+            urls = [row["url"] for row in ordered_rows]
+            conn.executemany(
+                "UPDATE jobs SET digested = 1 WHERE url = ?",
+                [(u,) for u in urls],
+            )
+            conn.commit()
     finally:
         conn.close()
 
-    print(f"{len(rows)} new jobs")
-    return len(rows)
+    print(f"{len(scored)} new jobs")
+    return len(scored)
 
 
 def main(argv: list[str] | None = None) -> int:

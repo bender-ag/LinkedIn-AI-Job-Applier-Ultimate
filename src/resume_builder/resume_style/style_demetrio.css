@@ -1,0 +1,126 @@
+/*Demetrio$https://dmetr.io*/
+body {
+  font-family: "Avenir Next", "Nunito Sans", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-size: 10.5pt;
+  line-height: 1.35;
+  color: #111;
+  background: #fff;
+  margin: 0 auto;
+  max-width: 7.6in;
+  padding: 0.45in 0.15in;
+}
+
+h1 {
+  font-size: 20pt;
+  font-weight: 700;
+  margin: 0 0 2px 0;
+  letter-spacing: 0.2px;
+}
+
+.contact-info {
+  margin: 0 0 14px 0;
+  font-size: 9.5pt;
+  color: #222;
+}
+
+.contact-info p,
+.contact-info .contact-links p {
+  display: inline;
+  margin: 0;
+}
+
+.contact-info p + p::before,
+.contact-links p + p::before {
+  content: "  \2022  ";
+  color: #555;
+}
+
+.contact-info span {
+  color: #222;
+}
+
+.contact-info a {
+  color: #222;
+  text-decoration: none;
+}
+
+section {
+  margin-bottom: 12px;
+}
+
+h2 {
+  font-size: 10.5pt;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  margin: 14px 0 6px 0;
+  padding: 0;
+  border: none;
+  color: #111;
+}
+
+.entry {
+  margin-bottom: 10px;
+}
+
+.entry-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.entry-name {
+  font-weight: 700;
+  font-size: 10.5pt;
+}
+
+.entry-location {
+  font-style: italic;
+  font-size: 9.5pt;
+  color: #333;
+}
+
+.entry-details {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.entry-title {
+  font-weight: 600;
+  font-size: 10pt;
+}
+
+.entry-year {
+  font-size: 9.5pt;
+  color: #333;
+  white-space: nowrap;
+}
+
+ul,
+ul.compact-list {
+  margin: 4px 0 0 0;
+  padding-left: 18px;
+}
+
+ul li,
+ul.compact-list li {
+  margin-bottom: 3px;
+  text-align: left;
+}
+
+p {
+  margin: 0 0 4px 0;
+}
+
+a {
+  color: #111;
+}
+
+strong {
+  font-weight: 700;
+}
+
+em {
+  font-style: italic;
+}

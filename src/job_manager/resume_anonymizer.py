@@ -87,6 +87,22 @@ class ResumeAnonymizer:
                     output_text = re.sub(rf"\b{value_to_replace_escaped}\b", value, output_text)
         return output_text
 
+    @staticmethod
+    def _link_repl(link: str):
+        """Replacement callable that mirrors the matched text's scheme.
+
+        A match that carried http(s):// (an href) gets the full link; a bare
+        display-text match (e.g. "github.com/user") gets the link without the
+        scheme, so visible text stays clean while hrefs stay clickable.
+        """
+
+        def repl(match: re.Match) -> str:
+            if match.group(0).startswith("http"):
+                return link
+            return re.sub(r"^https?://(?:www\.)?", "", link)
+
+        return repl
+
     def deanonymize_text(self, input_text: str) -> str:
         """Deanonymize the personal information in the input_text"""
         gender = self.resume_anonymized["personal_information"].get("gender")
@@ -99,18 +115,18 @@ class ResumeAnonymizer:
             if key == "github":
                 for i, github_link in enumerate(self.github_links):
                     output_text = re.sub(
-                        r"(?:https?://)?(?:www\.)?github\.com/[^\"'>^\s/]+",
-                        github_link,
+                        r"(?:https?://)?(?:www\.)?github\.com/[^\"'<>\s/]+",
+                        self._link_repl(github_link),
                         output_text,
-                        count=i + 1,
+                        count=0 if len(self.github_links) == 1 else i + 1,
                     )
             elif key == "linkedin":
                 for i, linkedin_link in enumerate(self.linkedin_links):
                     output_text = re.sub(
-                        r"(?:https?://)?(?:www\.)?linkedin\.com/in/[^\"'>^\s/]+",
-                        linkedin_link,
+                        r"(?:https?://)?(?:www\.)?linkedin\.com/in/[^\"'<>\s/]+",
+                        self._link_repl(linkedin_link),
                         output_text,
-                        count=i + 1,
+                        count=0 if len(self.linkedin_links) == 1 else i + 1,
                     )
             else:
                 if "github" in value_to_replace or "linkedin" in value_to_replace:

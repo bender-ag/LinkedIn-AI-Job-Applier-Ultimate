@@ -80,6 +80,9 @@ class EducationDetail(BaseModel):
 class ExperienceDetail(BaseModel):
     position: Optional[str] = Field(default="No info", description="Job position")
     company: Optional[str] = Field(default="No info", description="Company name")
+    tagline: Optional[str] = Field(
+        default=None, description="One-line description of what the company does"
+    )
     employment_period: Optional[str] = Field(default="No info", description="Employment period")
     location: Optional[str] = Field(default="No info", description="Location")
     industry: Optional[str] = Field(default="No info", description="Industry")
@@ -95,6 +98,7 @@ class Project(BaseModel):
     name: Optional[str] = Field(default="No info", description="Project name")
     description: Optional[str] = Field(default="No info", description="Project description")
     link: Optional[str] = Field(default="No info", description="Project link")
+    tagline: Optional[str] = Field(default=None, description="One-line description of the project")
 
 
 class Achievement(BaseModel):
@@ -205,6 +209,9 @@ class ResumeStructure(BaseModel):
 
     personal_information: PersonalInfo = Field(
         default_factory=PersonalInfo, description="Personal information"
+    )
+    summary: Optional[str] = Field(
+        default=None, description="Professional summary paragraph shown at the top of the resume"
     )
     education_details: List[EducationDetail] = Field(
         default_factory=list, description="Education details"

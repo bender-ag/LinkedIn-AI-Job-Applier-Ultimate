@@ -1,3 +1,4 @@
+import html
 import os
 import re
 import textwrap
@@ -1463,6 +1464,17 @@ class GPTAnswerer:
                 return header
             return ""
 
+        def summary_fn():
+            summary = self.resume_structured.get("summary")
+            if summary:
+                return (
+                    '<section id="summary">\n'
+                    "  <h2>Summary</h2>\n"
+                    f"  <p>{html.escape(summary)}</p>\n"
+                    "</section>"
+                )
+            return ""
+
         def education_fn():
             if self.resume_structured["education_details"] and self.job_readable:
                 return self.generate_education_section()
@@ -1503,6 +1515,7 @@ class GPTAnswerer:
         # Create a dictionary to map the function names to their respective callables
         functions = {
             "header": header_fn,
+            "summary": summary_fn,
             "education": education_fn,
             "work_experience": work_experience_fn,
             "side_projects": side_projects_fn,
@@ -1527,12 +1540,13 @@ class GPTAnswerer:
         full_resume = "<body>\n"
         full_resume += f"  {results.get('header', '')}\n"
         full_resume += "  <main>\n"
-        full_resume += f"    {results.get('education', '')}\n"
+        full_resume += f"    {results.get('summary', '')}\n"
         full_resume += f"    {results.get('work_experience', '')}\n"
         full_resume += f"    {results.get('side_projects', '')}\n"
         full_resume += f"    {results.get('achievements', '')}\n"
         full_resume += f"    {results.get('certifications', '')}\n"
         full_resume += f"    {results.get('additional_skills', '')}\n"
+        full_resume += f"    {results.get('education', '')}\n"
         full_resume += "  </main>\n"
         full_resume += "</body>"
         return full_resume

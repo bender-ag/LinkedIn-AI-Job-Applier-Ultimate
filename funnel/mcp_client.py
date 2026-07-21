@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 from typing import Any
@@ -37,8 +38,13 @@ class McpClient:
         self._session_id: str | None = None
         self._next_id = 1
 
-    def connect(self) -> None:
-        """POST initialize, capture session id, then send initialized notification."""
+    def connect(self, *, retries: int = 3, backoff: float = 1.0) -> None:
+        """POST initialize (with retry), capture session id, send initialized.
+
+        The Chrome DevTools bridge allows one active session; if another client
+        holds it, initialize is refused. Retry a few times so a briefly-busy
+        bridge (e.g. a just-finished run releasing its session) succeeds.
+        """
         init_payload = {
             "jsonrpc": "2.0",
             "id": self._alloc_id(),
@@ -49,13 +55,49 @@ class McpClient:
                 "clientInfo": {"name": "funnel"},
             },
         }
-        self._post(init_payload)
+        last_exc: Exception | None = None
+        for attempt in range(1, retries + 1):
+            try:
+                self._post(init_payload)
+                last_exc = None
+                break
+            except McpError as exc:
+                last_exc = exc
+                if attempt < retries:
+                    time.sleep(backoff * attempt)
+        if last_exc is not None:
+            raise last_exc
+
         notify_payload = {
             "jsonrpc": "2.0",
             "method": "notifications/initialized",
             "params": {},
         }
         self._post(notify_payload)
+
+    def close(self) -> None:
+        """Best-effort session termination (HTTP DELETE); safe to call twice."""
+        if not self._session_id:
+            return
+        headers = {"Accept": "application/json, text/event-stream"}
+        if self.api_key:
+            headers["X-API-Key"] = self.api_key
+        headers["Mcp-Session-Id"] = self._session_id
+        request = urllib.request.Request(self.url, headers=headers, method="DELETE")
+        try:
+            with urllib.request.urlopen(request, timeout=10):
+                pass
+        except (urllib.error.HTTPError, urllib.error.URLError, OSError):
+            pass  # server may not support DELETE; releasing our handle is enough
+        finally:
+            self._session_id = None
+
+    def __enter__(self) -> McpClient:
+        self.connect()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
 
     def call_tool(self, name: str, arguments: dict[str, Any]) -> str:
         """Call an MCP tool; return concatenated ``content[*].text``."""

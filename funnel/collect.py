@@ -237,12 +237,15 @@ def main(argv: list[str] | None = None) -> int:
 
     client = McpClient()
     client.connect()
-    jobs = collect(
-        queries,
-        client,
-        open_details=not args.no_details,
-        max_per_query=args.max_per_query,
-    )
+    try:
+        jobs = collect(
+            queries,
+            client,
+            open_details=not args.no_details,
+            max_per_query=args.max_per_query,
+        )
+    finally:
+        client.close()
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     with args.out.open("w", encoding="utf-8") as f:

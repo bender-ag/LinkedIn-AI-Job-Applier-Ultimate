@@ -39,3 +39,70 @@ def test_call_tool_raises_on_jsonrpc_error(monkeypatch):
         assert False, "expected McpError"
     except McpError as exc:
         assert "boom" in str(exc) or "error" in str(exc).lower() or exc.args
+
+
+def test_connect_retries_then_succeeds(monkeypatch):
+    client = McpClient(url="http://example.test/mcp", api_key="k")
+    calls = {"n": 0}
+
+    def flaky_post(payload):
+        if payload.get("method") == "initialize":
+            calls["n"] += 1
+            if calls["n"] < 2:
+                raise McpError("No valid session ID provided")
+        return None
+
+    monkeypatch.setattr(client, "_post", flaky_post)
+    monkeypatch.setattr("funnel.mcp_client.time.sleep", lambda *_: None)
+    client.connect(retries=3, backoff=0)
+    assert calls["n"] == 2  # failed once, succeeded on the second
+
+
+def test_connect_raises_after_exhausting_retries(monkeypatch):
+    client = McpClient(url="http://example.test/mcp", api_key="k")
+
+    def always_fail(payload):
+        raise McpError("busy")
+
+    monkeypatch.setattr(client, "_post", always_fail)
+    monkeypatch.setattr("funnel.mcp_client.time.sleep", lambda *_: None)
+    try:
+        client.connect(retries=2, backoff=0)
+        assert False, "expected McpError"
+    except McpError:
+        pass
+
+
+def test_close_sends_delete_and_clears_session(monkeypatch):
+    client = McpClient(url="http://example.test/mcp", api_key="k")
+    client._session_id = "sess-123"
+    captured = {}
+
+    class FakeResp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake_urlopen(request, timeout=None):
+        captured["method"] = request.method
+        captured["session"] = request.headers.get("Mcp-session-id")
+        return FakeResp()
+
+    monkeypatch.setattr("funnel.mcp_client.urllib.request.urlopen", fake_urlopen)
+    client.close()
+    assert captured["method"] == "DELETE"
+    assert captured["session"] == "sess-123"
+    assert client._session_id is None
+    client.close()  # idempotent, no-op when session already cleared
+
+
+def test_context_manager_connects_and_closes(monkeypatch):
+    client = McpClient(url="http://example.test/mcp", api_key="k")
+    events = []
+    monkeypatch.setattr(client, "connect", lambda: events.append("connect"))
+    monkeypatch.setattr(client, "close", lambda: events.append("close"))
+    with client as c:
+        assert c is client
+    assert events == ["connect", "close"]

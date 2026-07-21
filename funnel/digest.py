@@ -75,11 +75,97 @@ def _format_job(
     return "\n".join(lines)
 
 
+def _job_scored(row: sqlite3.Row, resume_text: str | None) -> dict:
+    """Collect the display fields for one job, including the deterministic score."""
+    data = {
+        "title": row["job_title"] or "(no title)",
+        "company": row["company_name"] or "(no company)",
+        "location": row["location"] or "",
+        "salary": row["salary_range"] or "",
+        "llm_score": row["interest_score"],
+        "reason": row["interest_reason"] or "",
+        "url": row["url"],
+        "first_seen": row["first_seen"] or "",
+        "kw_score": None,
+        "band": "",
+        "missing": [],
+    }
+    if resume_text is not None:
+        result = score_match(resume_text, row["job_description"] or "")
+        data["kw_score"] = result.score
+        data["band"] = result.band
+        data["missing"] = result.missing[:MISSING_KEYWORDS_CAP]
+    return data
+
+
+def _esc(text: str) -> str:
+    return (
+        str(text)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
+def render_html(jobs: list[dict], day: str, resume_note: str | None) -> str:
+    """Self-contained, theme-aware HTML digest, sorted by keyword score desc."""
+    ordered = sorted(jobs, key=lambda j: (j["kw_score"] is None, -(j["kw_score"] or 0)))
+    cards = []
+    for j in ordered:
+        badge = (
+            f'<span class="band band-{_esc(j["band"])}">{j["kw_score"]} · {_esc(j["band"])}</span>'
+            if j["kw_score"] is not None
+            else ""
+        )
+        meta = " · ".join(
+            x for x in [_esc(j["company"]), _esc(j["location"]), _esc(j["salary"])] if x
+        )
+        missing = (
+            '<div class="missing"><b>Missing keywords:</b> '
+            + ", ".join(_esc(m) for m in j["missing"])
+            + "</div>"
+            if j["missing"]
+            else ""
+        )
+        reason = f'<div class="reason">{_esc(j["reason"])}</div>' if j["reason"] else ""
+        cards.append(
+            f'<article class="job"><div class="jobhead"><h2><a href="{_esc(j["url"])}" '
+            f'target="_blank" rel="noopener">{_esc(j["title"])}</a></h2>{badge}</div>'
+            f'<div class="meta">{meta}</div>{reason}{missing}'
+            f'<div class="seen">first seen {_esc(j["first_seen"][:19])}</div></article>'
+        )
+    note = f'<p class="note">{_esc(resume_note)}</p>' if resume_note else ""
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Job digest — {_esc(day)}</title>
+<style>
+:root{{--bg:#fff;--fg:#1a1a1a;--muted:#666;--card:#f7f6f4;--rule:#e2ded8;--accent:#9e3b2d;--link:#1a4f8a}}
+@media(prefers-color-scheme:dark){{:root{{--bg:#16181c;--fg:#e8e6e3;--muted:#9a9a9a;--card:#1f2229;--rule:#33363d;--accent:#e0765f;--link:#7aa7d9}}}}
+*{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;padding:24px}}
+.wrap{{max-width:760px;margin:0 auto}}h1{{font-size:20px;margin:0 0 4px}}.sub{{color:var(--muted);margin:0 0 20px;font-size:13px}}
+.note{{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:8px 12px;color:var(--muted);font-size:13px}}
+.job{{background:var(--card);border:1px solid var(--rule);border-radius:10px;padding:14px 16px;margin:0 0 12px}}
+.jobhead{{display:flex;justify-content:space-between;align-items:baseline;gap:12px}}
+.job h2{{font-size:16px;margin:0}}.job a{{color:var(--link);text-decoration:none}}.job a:hover{{text-decoration:underline}}
+.band{{font-weight:700;font-size:12px;white-space:nowrap;padding:2px 8px;border-radius:20px;border:1px solid var(--rule)}}
+.band-strong{{color:#1a7f37;border-color:#1a7f37}}.band-partial{{color:var(--accent);border-color:var(--accent)}}.band-weak{{color:var(--muted)}}
+.meta{{color:var(--muted);font-size:13px;margin:4px 0}}.reason{{font-size:13px;margin:6px 0}}
+.missing{{font-size:13px;margin:6px 0;color:var(--fg)}}.seen{{color:var(--muted);font-size:11px;margin-top:8px}}
+</style></head><body><div class="wrap">
+<h1>Job digest — {_esc(day)}</h1><p class="sub">{len(ordered)} new role{'s' if len(ordered)!=1 else ''}, sorted by match score</p>
+{note}
+{''.join(cards)}
+</div></body></html>"""
+
+
 def digest_jobs(
     db_path: Path,
     min_score: int = DEFAULT_MIN_SCORE,
     resume_path: Path = DEFAULT_RESUME,
     out_dir: Path = DEFAULT_OUT_DIR,
+    fmt: str = "md",
 ) -> int:
     """Write digest markdown for undigested jobs. Returns count written."""
     if not db_path.exists():
@@ -110,23 +196,28 @@ def digest_jobs(
             resume_note = "resume_text.txt not found - keyword scoring skipped"
 
         out_dir.mkdir(parents=True, exist_ok=True)
-        path = _digest_path(out_dir)
-        body_parts = [_format_job(row, resume_text) for row in rows]
-        body = "\n".join(body_parts)
 
-        if path.exists():
-            existing = path.read_text(encoding="utf-8")
-            heading = _next_run_heading(existing)
-            section = f"\n{heading}\n\n"
-            if resume_note:
-                section += f"{resume_note}\n\n"
-            section += body
-            path.write_text(existing + section, encoding="utf-8")
+        if fmt == "html":
+            # HTML always renders the full current batch (no incremental append).
+            path = out_dir / f"digest-{_today_str()}.html"
+            jobs = [_job_scored(row, resume_text) for row in rows]
+            path.write_text(render_html(jobs, _today_str(), resume_note), encoding="utf-8")
         else:
-            header = f"# Job digest — {_today_str()}\n\n"
-            if resume_note:
-                header += f"{resume_note}\n\n"
-            path.write_text(header + body, encoding="utf-8")
+            path = _digest_path(out_dir)
+            body = "\n".join(_format_job(row, resume_text) for row in rows)
+            if path.exists():
+                existing = path.read_text(encoding="utf-8")
+                heading = _next_run_heading(existing)
+                section = f"\n{heading}\n\n"
+                if resume_note:
+                    section += f"{resume_note}\n\n"
+                section += body
+                path.write_text(existing + section, encoding="utf-8")
+            else:
+                header = f"# Job digest — {_today_str()}\n\n"
+                if resume_note:
+                    header += f"{resume_note}\n\n"
+                path.write_text(header + body, encoding="utf-8")
 
         urls = [row["url"] for row in rows]
         conn.executemany(
@@ -147,9 +238,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--min-score", type=int, default=DEFAULT_MIN_SCORE)
     parser.add_argument("--resume", type=Path, default=DEFAULT_RESUME)
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
+    parser.add_argument("--format", choices=["md", "html"], default="md", dest="fmt")
     args = parser.parse_args(argv)
 
-    digest_jobs(args.db, args.min_score, args.resume, args.out_dir)
+    digest_jobs(args.db, args.min_score, args.resume, args.out_dir, fmt=args.fmt)
     return 0
 
 

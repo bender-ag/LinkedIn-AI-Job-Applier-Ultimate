@@ -241,3 +241,46 @@ def test_zero_new_jobs(tmp_path: Path, capsys):
     assert n == 0
     assert "0 new jobs" in capsys.readouterr().out
     assert list(out.glob("digest-*.md")) == []
+
+
+def test_html_format_renders_and_sorts(tmp_path):
+    import sqlite3
+
+    from funnel import digest as digest_mod
+
+    db = tmp_path / "f.db"
+    conn = sqlite3.connect(db)
+    conn.execute(digest_mod_create_sql())
+    conn.execute(
+        "INSERT INTO jobs (url, job_title, company_name, job_description, interest_score,"
+        " first_seen, last_seen, digested) VALUES (?,?,?,?,?,?,?,0)",
+        (
+            "u1",
+            "React Engineer",
+            "Acme",
+            "react typescript node graphql",
+            80,
+            "2026-07-21T00:00:00+00:00",
+            "2026-07-21T00:00:00+00:00",
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    n = digest_mod.digest_jobs(
+        db, min_score=0, resume_path=tmp_path / "nope.txt", out_dir=tmp_path, fmt="html"
+    )
+    assert n == 1
+    html = (tmp_path / f"digest-{digest_mod._today_str()}.html").read_text()
+    assert "<!doctype html>" in html
+    assert "React Engineer" in html
+    assert "u1" in html
+
+
+def digest_mod_create_sql():
+    return (
+        "CREATE TABLE jobs (url TEXT PRIMARY KEY, job_title TEXT, company_name TEXT,"
+        " location TEXT, job_description TEXT, company_description TEXT, salary_range TEXT,"
+        " posted_date TEXT, interest_score INTEGER, interest_reason TEXT, skills TEXT,"
+        " first_seen TEXT, last_seen TEXT, digested INTEGER DEFAULT 0)"
+    )

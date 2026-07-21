@@ -743,6 +743,55 @@ class TestInterestingJobs:
             assert "submitted_resume_path" not in saved_payload[0]
             assert "executed_at" not in saved_payload[0]
 
+    def test_save_interesting_job_persists_full_record(self, job_applier):
+        """Test that description, location, salary and posted date are persisted"""
+        with patch.object(job_applier, "_save_data_to_yaml") as mock_save:
+            job_applier.interesting_jobs = []
+            job_applier.job_key_skills = ["Python"]
+
+            job = Job(
+                job_title="Senior Engineer",
+                company_name="Tech Corp",
+                url="https://linkedin.com/jobs/view/12345",
+                location="Remote, United States",
+                job_description="Build data pipelines with Python and SQL.",
+                company_description="Tech Corp builds analytics tools.",
+                salary_range="$150,000 - $180,000",
+                posted_date=datetime(2026, 7, 21, 9, 30),
+            )
+
+            job_applier._save_interesting_job(job, score=90, reasoning="Strong match")
+
+            saved_job = job_applier.interesting_jobs[0]
+            assert saved_job.location == "Remote, United States"
+            assert saved_job.job_description == "Build data pipelines with Python and SQL."
+            assert saved_job.company_description == "Tech Corp builds analytics tools."
+            assert saved_job.salary_range == "$150,000 - $180,000"
+            assert saved_job.posted_date == "2026-07-21T09:30:00"
+            saved_payload = mock_save.call_args.args[0]
+            assert saved_payload[0]["job_description"] == (
+                "Build data pipelines with Python and SQL."
+            )
+            assert saved_payload[0]["location"] == "Remote, United States"
+
+    def test_save_interesting_job_empty_optional_fields_stay_none(self, job_applier):
+        """Test that empty-string Job fields persist as None (excluded from YAML)"""
+        with patch.object(job_applier, "_save_data_to_yaml") as mock_save:
+            job_applier.interesting_jobs = []
+            job_applier.job_key_skills = []
+
+            job = Job(job_title="Engineer", company_name="Corp", url="")
+
+            job_applier._save_interesting_job(job, score=75, reasoning="Fit")
+
+            saved_job = job_applier.interesting_jobs[0]
+            assert saved_job.location is None
+            assert saved_job.job_description is None
+            assert saved_job.posted_date is None
+            saved_payload = mock_save.call_args.args[0]
+            assert "job_description" not in saved_payload[0]
+            assert "salary_range" not in saved_payload[0]
+
     def test_save_interesting_job_sorted(self, job_applier):
         """Test that interesting jobs are sorted by score"""
         with patch.object(job_applier, "_save_data_to_yaml"):
@@ -1013,7 +1062,9 @@ class TestHandleApplyResult:
         mock_save_interesting.assert_called_once_with(job, score=82, reasoning=apply_result[1])
 
     @pytest.mark.asyncio
-    async def test_handle_apply_result_easy_apply_dialog_skip_saved_as_interesting(self, job_applier):
+    async def test_handle_apply_result_easy_apply_dialog_skip_saved_as_interesting(
+        self, job_applier
+    ):
         job_applier.applies_num = 0
         job_applier.success_applies_num = 0
         job_applier.total_applies_num = 0

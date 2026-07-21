@@ -232,6 +232,15 @@ class JobInfo(BaseModel):
     job_title: str = Field(default="", description="Title of the job")
     company_name: Optional[str] = Field(default=None, description="Name of the company")
     url: str = Field(default="", description="URL of the job")
+    location: Optional[str] = Field(default=None, description="Job location")
+    job_description: Optional[str] = Field(default=None, description="Full job description text")
+    company_description: Optional[str] = Field(default=None, description="Company description text")
+    salary_range: Optional[str] = Field(
+        default=None, description="Salary range if mentioned in the posting"
+    )
+    posted_date: Optional[str] = Field(
+        default=None, description="When the job was posted (ISO format, if available)"
+    )
     skip_reason: Optional[str] = Field(
         default="", description="If application was skipped, reason for the skip"
     )

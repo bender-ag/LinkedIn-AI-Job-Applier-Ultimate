@@ -6,6 +6,7 @@ import argparse
 import logging
 import re
 import sys
+import time
 from pathlib import Path
 from typing import Any, Protocol
 from urllib.parse import urlencode
@@ -160,12 +161,30 @@ def _to_interesting_job(card: dict[str, Any], *, url: str, job_description: str)
     }
 
 
+def _fetch_detail(client: ToolClient, uid: str | None, settle: float) -> tuple[str, str]:
+    """Click a card and read its detail pane; re-snapshot once if description empty."""
+    if uid:
+        client.call_tool("click", {"uid": uid})
+    time.sleep(settle)
+    detail_snap = client.call_tool("take_snapshot", {})
+    description = parse_job_detail(detail_snap).get("job_description") or ""
+    if not description:
+        # Detail pane may not have rendered yet; give it one more beat.
+        time.sleep(settle)
+        detail_snap = client.call_tool("take_snapshot", {})
+        description = parse_job_detail(detail_snap).get("job_description") or ""
+    jk = _extract_jk(detail_snap)
+    job_url = f"https://www.indeed.com/viewjob?jk={jk}" if jk else ""
+    return job_url, description
+
+
 def collect(
     queries: list[dict[str, Any]],
     client: ToolClient,
     *,
     open_details: bool = True,
     max_per_query: int = 25,
+    settle: float = 1.5,
 ) -> list[dict[str, Any]]:
     """Run queries via MCP client; return interesting_jobs-shaped records."""
     results: list[dict[str, Any]] = []
@@ -180,6 +199,7 @@ def collect(
                 client.call_tool("new_page", {"url": url})
             else:
                 client.call_tool("navigate_page", {"url": url})
+            time.sleep(settle)  # let Indeed render the (lazy) results list
             snapshot = client.call_tool("take_snapshot", {})
 
             if has_no_results(snapshot):
@@ -189,26 +209,24 @@ def collect(
 
             cards = parse_job_cards(snapshot)
             for card in cards[:max_per_query]:
-                job_url = ""
-                job_description = ""
-                if open_details:
-                    uid = card.get("_uid")
-                    if uid:
-                        client.call_tool("click", {"uid": uid})
-                    detail_snap = client.call_tool("take_snapshot", {})
-                    jk = _extract_jk(detail_snap)
-                    if jk:
-                        job_url = f"https://www.indeed.com/viewjob?jk={jk}"
-                    job_description = parse_job_detail(detail_snap).get("job_description") or ""
+                # A single bad card (stale uid, slow pane) must not abort the query.
+                try:
+                    job_url = ""
+                    job_description = ""
+                    if open_details:
+                        job_url, job_description = _fetch_detail(client, card.get("_uid"), settle)
 
-                if job_url and job_url in seen_urls:
+                    if job_url and job_url in seen_urls:
+                        continue
+                    if job_url:
+                        seen_urls.add(job_url)
+
+                    results.append(
+                        _to_interesting_job(card, url=job_url, job_description=job_description)
+                    )
+                except Exception as exc:
+                    logger.warning("card failed (%s): %s", card.get("job_title"), exc)
                     continue
-                if job_url:
-                    seen_urls.add(job_url)
-
-                results.append(
-                    _to_interesting_job(card, url=job_url, job_description=job_description)
-                )
         except Exception as exc:
             logger.exception("query failed for %s in %s: %s", q, l, exc)
             print(f"query failed for {q} in {l}: {exc}")
@@ -227,6 +245,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
     parser.add_argument("--no-details", action="store_true", help="Skip per-job description fetch")
     parser.add_argument("--max", type=int, default=25, dest="max_per_query")
+    parser.add_argument(
+        "--settle",
+        type=float,
+        default=1.5,
+        help="Seconds to wait for the page/detail pane to render (default 1.5)",
+    )
     args = parser.parse_args(argv)
 
     with args.config.open(encoding="utf-8") as f:
@@ -243,6 +267,7 @@ def main(argv: list[str] | None = None) -> int:
             client,
             open_details=not args.no_details,
             max_per_query=args.max_per_query,
+            settle=args.settle,
         )
     finally:
         client.close()

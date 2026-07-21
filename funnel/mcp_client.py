@@ -52,7 +52,10 @@ class McpClient:
             "params": {
                 "protocolVersion": "2024-11-05",
                 "capabilities": {},
-                "clientInfo": {"name": "funnel"},
+                # clientInfo.version is REQUIRED by the MCP initialize schema;
+                # omitting it makes the server reject the request as non-initialize
+                # ("No valid session ID provided").
+                "clientInfo": {"name": "funnel", "version": "0.1.0"},
             },
         }
         last_exc: Exception | None = None

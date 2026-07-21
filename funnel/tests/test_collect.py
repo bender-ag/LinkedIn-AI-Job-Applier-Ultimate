@@ -99,7 +99,7 @@ def test_collect_yields_jobs_and_skips_no_results():
         {"q": "software engineer react", "l": "Remote", "fromage": 1, "sort": "date"},
         {"q": "senior frontend engineer", "l": "Austin, TX", "fromage": 3, "sort": "date"},
     ]
-    jobs = collect(queries, client, open_details=True, max_per_query=25)
+    jobs = collect(queries, client, open_details=True, max_per_query=25, settle=0)
 
     assert len(jobs) == 3
     assert jobs[0]["job_title"] == "Senior / Staff Full Stack Software Engineer – Remote"

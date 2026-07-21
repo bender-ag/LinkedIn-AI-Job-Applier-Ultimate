@@ -183,6 +183,15 @@ strong {
   color: var(--ink-strong);
 }
 
+/* Project titles and skill-category labels carry the same weight as role
+   titles; company names stay regular. */
+#side-projects .entry-name,
+#side-projects .entry-name a,
+#skills-languages strong {
+  font-weight: 800;
+  color: var(--ink-strong);
+}
+
 em {
   font-style: italic;
   color: var(--muted);

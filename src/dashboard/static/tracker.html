@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Job Funnel Tracker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+  <link rel="stylesheet" href="/static/styles.css">
+  <style>
+    /* Tracker-specific styles */
+    .tracker-hero {
+      padding: 1rem 1.4rem;
+    }
+
+    .tracker-hero h1 {
+      margin: 0;
+      font-size: 1.6rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    /* Status tiles line */
+    .status-tiles {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+      gap: 0.6rem;
+      margin-bottom: 0.85rem;
+    }
+
+    .status-tile {
+      background: var(--panel-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.85rem 1rem;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      text-align: center;
+    }
+
+    .status-tile:hover {
+      border-color: var(--border-bright);
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .status-tile.active {
+      border-color: var(--accent);
+      background: var(--accent-dim);
+      box-shadow: 0 0 16px var(--accent-glow);
+    }
+
+    .status-tile-label {
+      display: block;
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      margin-bottom: 0.4rem;
+    }
+
+    .status-tile-count {
+      display: block;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 1.4rem;
+      font-weight: 500;
+      color: var(--text);
+      line-height: 1;
+    }
+
+    /* Controls row */
+    .tracker-controls {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      flex-wrap: wrap;
+      margin-bottom: 1rem;
+    }
+
+    .tracker-controls input[type="search"],
+    .tracker-controls select,
+    .tracker-controls button {
+      flex-shrink: 0;
+    }
+
+    .tracker-controls input[type="search"] {
+      flex: 1;
+      min-width: 200px;
+    }
+
+    /* Jobs table */
+    .tracker-table-wrap {
+      overflow-x: auto;
+      border-radius: 9px;
+      border: 1px solid var(--border);
+    }
+
+    .tracker-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .tracker-table thead {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+
+    .tracker-table th {
+      padding: 0.75rem 0.8rem;
+      background: var(--th-bg);
+      border-bottom: 1px solid var(--border);
+      font-size: 0.68rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      text-align: left;
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.15s;
+      white-space: nowrap;
+    }
+
+    .tracker-table th:hover {
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    .tracker-table th.sortable::after {
+      content: ' ⇅';
+      opacity: 0.4;
+    }
+
+    .tracker-table th.sorted-asc::after {
+      content: ' ↑';
+      opacity: 1;
+    }
+
+    .tracker-table th.sorted-desc::after {
+      content: ' ↓';
+      opacity: 1;
+    }
+
+    .tracker-table tbody tr {
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      transition: background 0.1s;
+    }
+
+    .tracker-table tbody tr:hover {
+      background: var(--surface);
+    }
+
+    .tracker-table td {
+      padding: 0.75rem 0.8rem;
+      font-size: 0.85rem;
+      vertical-align: top;
+    }
+
+    .tracker-table tbody tr:last-child td {
+      border-bottom: none;
+    }
+
+    /* Score badge */
+    .score-badge {
+      display: inline-block;
+      padding: 0.2rem 0.5rem;
+      border-radius: 6px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      font-family: 'JetBrains Mono', monospace;
+      text-align: center;
+      min-width: 45px;
+    }
+
+    .score-badge.strong {
+      background: rgba(16, 185, 129, 0.2);
+      color: #34d399;
+      border: 1px solid rgba(16, 185, 129, 0.4);
+    }
+
+    .score-badge.partial {
+      background: rgba(56, 189, 248, 0.2);
+      color: #38bdf8;
+      border: 1px solid rgba(56, 189, 248, 0.4);
+    }
+
+    .score-badge.weak {
+      background: var(--surface);
+      color: var(--muted);
+      border: 1px solid var(--border);
+    }
+
+    .score-badge.null {
+      background: var(--surface);
+      color: var(--muted);
+      border: 1px solid var(--border);
+    }
+
+    /* Job title link */
+    .job-title-link {
+      color: var(--accent);
+      text-decoration: none;
+    }
+
+    .job-title-link:hover {
+      text-decoration: underline;
+    }
+
+    /* Status select in table */
+    .job-status-select {
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: rgba(0, 0, 0, 0.3);
+      color: var(--text);
+      padding: 0.3rem 0.5rem;
+      font-size: 0.8rem;
+      cursor: pointer;
+    }
+
+    /* Expand row */
+    .expand-row {
+      display: none;
+    }
+
+    .expand-row.open {
+      display: table-row;
+    }
+
+    .expand-row-content {
+      padding: 1rem 0.8rem;
+      background: rgba(255, 255, 255, 0.02);
+      border-top: 2px solid var(--border);
+    }
+
+    .expand-row-content > div {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      max-width: 100%;
+    }
+
+    .expand-section {
+      display: grid;
+      gap: 0.4rem;
+    }
+
+    .expand-section-label {
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+    }
+
+    .expand-section textarea,
+    .expand-section input[type="date"] {
+      border-radius: 7px;
+      border: 1px solid var(--border);
+      background: rgba(0, 0, 0, 0.3);
+      color: var(--text);
+      padding: 0.5rem 0.7rem;
+      font-size: 0.85rem;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    .expand-section textarea:focus,
+    .expand-section input[type="date"]:focus {
+      border-color: rgba(56, 189, 248, 0.5);
+    }
+
+    .expand-section textarea {
+      min-height: 80px;
+      resize: vertical;
+    }
+
+    .missing-keywords {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+    }
+
+    .keyword-badge {
+      display: inline-block;
+      padding: 0.25rem 0.5rem;
+      border-radius: 5px;
+      font-size: 0.73rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--muted);
+    }
+
+    .job-description-preview {
+      grid-column: 1 / -1;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 0.7rem;
+      font-size: 0.8rem;
+      line-height: 1.5;
+      color: var(--muted);
+      max-height: 200px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+
+    /* Footer */
+    .tracker-footer {
+      text-align: center;
+      padding: 1.5rem;
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+
+    .tracker-footer a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+
+    .tracker-footer a:hover {
+      text-decoration: underline;
+    }
+
+    /* Loading state */
+    .tracker-loading {
+      text-align: center;
+      padding: 2rem 1rem;
+      color: var(--muted);
+    }
+
+    /* Error state */
+    .tracker-error {
+      background: var(--red-dim);
+      border: 1px solid rgba(244, 63, 94, 0.3);
+      border-radius: 8px;
+      padding: 1rem;
+      color: #fda4af;
+      margin-bottom: 1rem;
+    }
+  </style>
+</head>
+<body>
+  <main class="layout">
+    <!-- Header -->
+    <section class="panel tracker-hero">
+      <h1>Job Funnel</h1>
+    </section>
+
+    <!-- Status tiles -->
+    <section class="status-tiles" id="status-tiles"></section>
+
+    <!-- Error message (hidden by default) -->
+    <div id="error-message" class="tracker-error" style="display: none;"></div>
+
+    <!-- Controls -->
+    <section class="panel">
+      <div class="tracker-controls">
+        <input
+          type="search"
+          id="search-input"
+          placeholder="Search by title, company, or location..."
+          aria-label="Search jobs"
+        >
+        <select id="status-filter" aria-label="Filter by status">
+          <option value="">All statuses</option>
+        </select>
+        <button id="run-sweep-btn" disabled title="Run Sweep feature coming soon">
+          Run Sweep (soon)
+        </button>
+      </div>
+    </section>
+
+    <!-- Jobs table -->
+    <section class="panel">
+      <div class="tracker-table-wrap">
+        <table class="tracker-table">
+          <thead>
+            <tr>
+              <th data-column="kw_score" class="sortable">Score</th>
+              <th data-column="job_title" class="sortable">Title</th>
+              <th data-column="company_name" class="sortable">Company</th>
+              <th data-column="location" class="sortable">Location</th>
+              <th data-column="salary_range" class="sortable">Salary</th>
+              <th data-column="status" class="sortable">Status</th>
+              <th data-column="first_seen" class="sortable">First seen</th>
+            </tr>
+          </thead>
+          <tbody id="jobs-tbody">
+            <tr class="tracker-loading">
+              <td colspan="7">Loading jobs...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <section class="tracker-footer">
+      <p>digest: <a href="/artifacts">/artifacts</a> · ops: <a href="/ops">/ops</a></p>
+    </section>
+  </main>
+
+  <script src="/static/tracker.js"></script>
+</body>
+</html>

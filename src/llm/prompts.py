@@ -436,6 +436,8 @@ Act as an HR expert and resume writer with a specialization in creating ATS-frie
 
 To implement this:
 - Be concise and to the point, don't write a lot of text.
+- Include an entry for EVERY job in My information, even if there are more jobs than the template shows example slots for. Never drop a job. The template's number of entry blocks is only an example — add as many entry blocks as there are jobs.
+- The oldest or least job-relevant roles may be condensed to a single bullet (or no bullet) so they act as a brief timeline anchor rather than a full section; still include their company, title, and dates.
 - If any of the work experience details (e.g., responsibilities, achievements) are not provided (i.e., None, No info), omit those sections when filling out the template.
 - If a "tagline" is provided for a company, include it VERBATIM in the entry-tagline element — never rewrite it. If no tagline is provided, omit the entry-tagline element entirely.
 

@@ -61,6 +61,7 @@ prompt_working_experience_template = """
           <span class="entry-name">[Company Name]</span>
           <span class="entry-location">[Location]</span>
       </div>
+      <p class="entry-tagline">[One-line description of what the company does, if provided]</p>
       <div class="entry-details">
           <span class="entry-title">[Your Job Title]</span>
           <span class="entry-year">[Start Date] – [End Date]</span>
@@ -76,6 +77,7 @@ prompt_working_experience_template = """
           <span class="entry-name">[Company Name]</span>
           <span class="entry-location">[Location]</span>
       </div>
+      <p class="entry-tagline">[One-line description of what the company does, if provided]</p>
       <div class="entry-details">
           <span class="entry-title">[Your Job Title]</span>
           <span class="entry-year">[Start Date] – [End Date] </span>
@@ -91,6 +93,7 @@ prompt_working_experience_template = """
           <span class="entry-name">[Company Name]</span>
           <span class="entry-location">[Location]</span>
       </div>
+      <p class="entry-tagline">[One-line description of what the company does, if provided]</p>
       <div class="entry-details">
           <span class="entry-title">[Your Job Title]</span>
           <span class="entry-year">[Start Date] – [End Date] </span>
@@ -115,6 +118,7 @@ prompt_side_projects_template = """
       <div class="entry-header">
           <span class="entry-name"><i class="fab fa-github"></i> <a href="[Github Repo or Link]">[Project Name]</a></span>
       </div>
+      <p class="entry-tagline">[One-line description of the project, if provided]</p>
       <ul class="compact-list">
           <li>[Describe any notable recognition or reception]</li>
           <li>[Describe any notable recognition or reception]</li>
@@ -124,6 +128,7 @@ prompt_side_projects_template = """
       <div class="entry-header">
           <span class="entry-name"><i class="fab fa-github"></i> <a href="[Github Repo or Link]">[Project Name]</a></span>
       </div>
+      <p class="entry-tagline">[One-line description of the project, if provided]</p>
       <ul class="compact-list">
           <li>[Describe any notable recognition or reception]</li>
           <li>[Describe any notable recognition or reception]</li>
@@ -133,6 +138,7 @@ prompt_side_projects_template = """
       <div class="entry-header">
           <span class="entry-name"><i class="fab fa-github"></i> <a href="[Github Repo or Link]">[Project Name]</a></span>
       </div>
+      <p class="entry-tagline">[One-line description of the project, if provided]</p>
       <ul class="compact-list">
           <li>[Describe any notable recognition or reception]</li>
           <li>[Describe any notable recognition or reception]</li>

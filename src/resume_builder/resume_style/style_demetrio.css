@@ -1,25 +1,29 @@
 /*Demetrio$https://dmetr.io*/
+@page {
+  margin: 0.5in 0.5in 0.6in 0.5in;
+}
+
 :root {
-  --accent: #b0432f;
-  --ink: #3d3d3d;
-  --ink-strong: #1f1f1f;
-  --muted: #8a8a8a;
-  --rule: #dcd8d2;
+  --accent: #9e3b2d;
+  --ink: #4a4a4a;
+  --ink-strong: #3a3a3a;
+  --muted: #656565;
+  --rule: #ddd9d3;
 }
 
 body {
-  font-family: "Avenir Next", "Nunito Sans", "Lato", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-family: "Avenir Next", "Nunito Sans", "Lato", "Segoe UI", "Helvetica Neue", Arial,
+    sans-serif;
   font-size: 10pt;
   line-height: 1.4;
   color: var(--ink);
   background: #fff;
-  margin: 0 auto;
-  max-width: 7.9in;
-  padding: 0.1in 0.15in;
+  margin: 0;
+  padding: 0;
 }
 
 header {
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 h1 {
@@ -31,14 +35,14 @@ h1 {
 }
 
 .subtitle {
-  font-size: 12.5pt;
+  font-size: 12pt;
   font-weight: 400;
   color: var(--ink);
-  margin: 0 0 4px 0;
+  margin: 0 0 3px 0;
 }
 
 .contact-info {
-  margin: 0 0 10px 0;
+  margin: 0 0 8px 0;
   font-size: 9pt;
   color: var(--muted);
 }
@@ -64,77 +68,91 @@ h1 {
 }
 
 section {
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 
 h2 {
   font-size: 9.5pt;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 1.6px;
+  letter-spacing: 1.8px;
   color: var(--accent);
-  margin: 12px 0 4px 0;
+  margin: 10px 0 4px 0;
   padding: 0 0 3px 0;
   border-bottom: 1px solid var(--rule);
 }
 
 #summary p {
-  margin: 6px 0 0 0;
+  margin: 5px 0 0 0;
 }
 
+/* Entry layout: company + dates share the first row, role title below.
+   The template nests spans in two divs, so flatten with display:contents
+   and place items on an explicit grid. */
 .entry {
-  margin-bottom: 9px;
-}
-
-.entry-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  column-gap: 12px;
+  margin-bottom: 8px;
   margin-top: 8px;
 }
 
+.entry-header,
+.entry-details {
+  display: contents;
+}
+
 .entry-name {
+  grid-row: 1;
+  grid-column: 1;
   font-weight: 400;
   font-size: 11pt;
   color: var(--ink-strong);
 }
 
-.entry-location {
-  font-style: italic;
-  font-size: 9pt;
-  color: var(--muted);
-}
-
-.entry-details {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 12px;
-}
-
-.entry-title {
-  font-weight: 700;
-  font-size: 10pt;
-  color: var(--ink-strong);
-}
-
 .entry-year {
+  grid-row: 1;
+  grid-column: 2;
   font-weight: 700;
   font-size: 10pt;
   color: var(--ink-strong);
   white-space: nowrap;
-  flex-shrink: 0;
+  align-self: baseline;
+}
+
+.entry-title {
+  grid-row: 2;
+  grid-column: 1;
+  font-weight: 700;
+  font-size: 10pt;
+  color: var(--ink-strong);
+}
+
+.entry-location {
+  grid-row: 2;
+  grid-column: 2;
+  font-style: italic;
+  font-size: 9pt;
+  color: var(--muted);
+  align-self: baseline;
+}
+
+.entry ul,
+.entry ul.compact-list {
+  grid-row: 3;
+  grid-column: 1 / -1;
 }
 
 ul,
 ul.compact-list {
   margin: 4px 0 0 0;
-  padding-left: 20px;
+  padding-left: 28px;
 }
 
 ul li,
 ul.compact-list li {
   margin-bottom: 4px;
+  padding-left: 4px;
   text-align: left;
 }
 

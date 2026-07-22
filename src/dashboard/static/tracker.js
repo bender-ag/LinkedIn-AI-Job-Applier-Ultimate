@@ -158,23 +158,41 @@ async function fetchSweepStatus() {
 /**
  * Reflect sweep status in buttons + status line; refresh data when a run ends.
  */
+function formatSweepAge(hours) {
+  if (hours == null) return "";
+  if (hours < 1) return "just now";
+  if (hours < 24) return `${Math.round(hours)}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
+function formatSweepHealth(h) {
+  if (!h || !h.state || h.state === "never") {
+    return (h && h.message) || "";
+  }
+  const parts = [];
+  if (h.collected != null) parts.push(`${h.collected} collected`);
+  if (h.new_count != null) parts.push(`${h.new_count} new`);
+  const counts = parts.length ? ` · ${parts.join(", ")}` : "";
+  const age = h.age_hours != null ? ` · ${formatSweepAge(h.age_hours)}` : "";
+  if (h.level === "ok") return `Last sweep ✓${counts}${age}`;
+  const icon = h.level === "error" ? "✕" : h.level === "warn" ? "⚠" : "";
+  return `${icon ? icon + " " : ""}${h.message}${counts}${age}`;
+}
+
 function renderSweepStatus(status) {
   const running = !!status.running;
   runSweepBtn.style.display = running ? "none" : "";
   stopSweepBtn.style.display = running ? "" : "none";
-  sweepStatusEl.classList.toggle("running", running);
 
+  const health = status.health || {};
+  sweepStatusEl.classList.remove("running", "ok", "warn", "error");
   if (running) {
+    sweepStatusEl.classList.add("running");
     sweepStatusEl.textContent = "Sweep running…";
-  } else if (status.latest && status.latest.status !== "running") {
-    const l = status.latest;
-    const parts = [];
-    if (l.collected != null) parts.push(`${l.collected} collected`);
-    if (l.new_count != null) parts.push(`${l.new_count} new`);
-    const detail = parts.length ? ` (${parts.join(", ")})` : "";
-    sweepStatusEl.textContent = `Last sweep: ${l.status}${detail}`;
   } else {
-    sweepStatusEl.textContent = "";
+    const cls = { ok: "ok", warn: "warn", error: "error" }[health.level];
+    if (cls) sweepStatusEl.classList.add(cls);
+    sweepStatusEl.textContent = formatSweepHealth(health);
   }
 
   // On a running → finished transition, refresh the jobs + status counts.

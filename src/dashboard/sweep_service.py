@@ -18,7 +18,6 @@ sweep and the (legacy) apply bot never clobber each other's state.
 from __future__ import annotations
 
 import json
-import os
 import re
 import signal
 import sqlite3
@@ -47,6 +46,10 @@ QUERIES_CONFIG = ROOT_DIR / "funnel" / "queries.yaml"
 _COLLECTED_RE = re.compile(r"\[1/3\]\s+collected\s+(\d+)")
 _MERGED_RE = re.compile(r"\[2/3\]\s+merged:\s+(\d+)\s+new")
 
+# Serializes the check-and-launch in start_sweep so two concurrent requests
+# can't both pass the "already running" check and launch two sweeps.
+_start_lock = threading.Lock()
+
 
 class BridgeUnavailable(RuntimeError):
     """The browser bridge can't be acquired for a sweep."""
@@ -54,6 +57,29 @@ class BridgeUnavailable(RuntimeError):
 
 class SweepAlreadyRunning(RuntimeError):
     """A sweep was requested while one is already running."""
+
+
+def _connect(db_path: Path) -> sqlite3.Connection:
+    """Open the funnel DB with a generous busy timeout (the sweep subprocess
+    writes the same file concurrently — see also WAL mode in ensure_schema)."""
+    return sqlite3.connect(db_path, timeout=30.0)
+
+
+def _sweep_pid_alive(pid: int | None) -> bool:
+    """
+    True only if ``pid`` is running AND is our ``funnel.sweep`` process.
+
+    Guards against PID reuse: after an orphaned process file, the recorded pid
+    may have been reassigned to an unrelated process. On Linux we confirm via
+    ``/proc/<pid>/cmdline``; elsewhere we fall back to bare liveness.
+    """
+    if not is_process_running(pid):
+        return False
+    try:
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        return True
+    return b"funnel.sweep" in cmdline
 
 
 # ── Browser-bridge guard ──
@@ -94,7 +120,7 @@ def _load_queries() -> list:
 
 
 def _insert_sweep(db_path: Path, queries: list) -> int:
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     try:
         _ensure_schema_once(conn, db_path)
         cur = conn.execute(
@@ -115,7 +141,7 @@ def _finish_sweep(
     collected: int | None = None,
     new_count: int | None = None,
 ) -> None:
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     try:
         conn.execute(
             "UPDATE sweeps SET finished_at = ?, status = ?, collected = ?, "
@@ -133,7 +159,7 @@ def get_sweeps(db_path: Path | None = None, limit: int = 50) -> list[dict]:
         db_path = DB_PATH
     if not db_path.exists():
         return []
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
         _ensure_schema_once(conn, db_path)
@@ -185,13 +211,39 @@ def _watch_sweep(process: subprocess.Popen, sweep_id: int, db_path: Path) -> Non
     )
 
 
+def _reconcile_orphan(db_path: Path, sweep_id: int | None) -> None:
+    """
+    Recover from a stranded sweep: mark a still-'running' row failed and clear
+    the process file. Called when the recorded pid is no longer our live sweep
+    (watcher died on a server restart, or the pid was reused).
+    """
+    if sweep_id is not None and db_path.exists():
+        conn = _connect(db_path)
+        try:
+            _ensure_schema_once(conn, db_path)
+            conn.execute(
+                "UPDATE sweeps SET status = 'failed', finished_at = ? "
+                "WHERE id = ? AND status = 'running'",
+                (_now_iso(), sweep_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    _clear_sweep_proc()
+
+
 def get_sweep_status(db_path: Path | None = None) -> dict[str, Any]:
     """Current sweep process state + the latest sweep row."""
     if db_path is None:
         db_path = DB_PATH
     info = _read_json(SWEEP_PROC_FILE, {})
     pid = info.get("pid")
-    running = is_process_running(pid)
+    running = _sweep_pid_alive(pid)
+    if info and not running:
+        # Orphaned process file (watcher died / pid reused): reconcile so a
+        # stale 'running' row + process file can't wedge the tracker forever.
+        _reconcile_orphan(db_path, info.get("sweep_id"))
+        info = {}
     latest = get_sweeps(db_path, limit=1)
     return {
         "running": running,
@@ -213,27 +265,36 @@ def start_sweep(db_path: Path | None = None) -> dict[str, Any]:
     if db_path is None:
         db_path = DB_PATH
 
-    if get_sweep_status(db_path)["running"]:
-        raise SweepAlreadyRunning("A sweep is already running.")
+    # Hold the lock across check → probe → launch → record so two concurrent
+    # requests can't both pass the running check.
+    with _start_lock:
+        if get_sweep_status(db_path)["running"]:
+            raise SweepAlreadyRunning("A sweep is already running.")
 
-    probe_browser_bridge()  # raises BridgeUnavailable
+        probe_browser_bridge()  # raises BridgeUnavailable
 
-    sweep_id = _insert_sweep(db_path, _load_queries())
-    env = os.environ.copy()
-    process = subprocess.Popen(
-        ["uv", "run", "python", "-m", "funnel.sweep", "--db", str(db_path)],
-        cwd=ROOT_DIR,
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
-    )
-    _write_json(
-        SWEEP_PROC_FILE,
-        {"pid": process.pid, "sweep_id": sweep_id, "started_at": _now_iso()},
-    )
-    threading.Thread(target=_watch_sweep, args=(process, sweep_id, db_path), daemon=True).start()
-    return get_sweep_status(db_path)
+        sweep_id = _insert_sweep(db_path, _load_queries())
+        try:
+            # Inherits the parent environment (PATH for `uv`); no changes needed.
+            process = subprocess.Popen(
+                ["uv", "run", "python", "-m", "funnel.sweep", "--db", str(db_path)],
+                cwd=ROOT_DIR,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+        except Exception:
+            # Don't leave the just-inserted row stuck 'running' if launch fails.
+            _finish_sweep(db_path, sweep_id, status="failed")
+            raise
+        _write_json(
+            SWEEP_PROC_FILE,
+            {"pid": process.pid, "sweep_id": sweep_id, "started_at": _now_iso()},
+        )
+        threading.Thread(
+            target=_watch_sweep, args=(process, sweep_id, db_path), daemon=True
+        ).start()
+        return get_sweep_status(db_path)
 
 
 def stop_sweep(db_path: Path | None = None) -> bool:

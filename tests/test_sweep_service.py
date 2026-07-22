@@ -158,3 +158,52 @@ def test_watch_sweep_marks_failed_on_nonzero_exit(monkeypatch, tmp_path: Path):
     ss._watch_sweep(_FakeProc([b"boom\n"], rc=1), sweep_id, db_path)
     assert ss.get_sweeps(db_path)[0]["status"] == "failed"
     tracker_service._migrated_paths.clear()
+
+
+# ── PID-reuse guard + orphan reconciliation (review fixes #1/#5) ──
+def test_sweep_pid_alive_false_for_dead_pid():
+    # A pid that (almost certainly) isn't running.
+    assert ss._sweep_pid_alive(2_000_000_000) is False
+    assert ss._sweep_pid_alive(None) is False
+
+
+def test_get_sweep_status_reconciles_orphaned_running_row(monkeypatch, tmp_path):
+    tracker_service._migrated_paths.clear()
+    db_path = _seed_db(tmp_path)
+    proc_file = tmp_path / "sweep_process.json"
+    monkeypatch.setattr(ss, "SWEEP_PROC_FILE", proc_file)
+
+    # A 'running' row whose process is gone, with a stale proc file pointing at
+    # a dead pid — the classic "watcher died on restart" orphan.
+    sweep_id = ss._insert_sweep(db_path, [])
+    ss._write_json(proc_file, {"pid": 2_000_000_000, "sweep_id": sweep_id, "started_at": "t"})
+
+    status = ss.get_sweep_status(db_path)
+
+    assert status["running"] is False
+    assert status["latest"]["status"] == "failed"  # row reconciled
+    assert not proc_file.exists()  # process file cleared
+    tracker_service._migrated_paths.clear()
+
+
+# ── Popen failure finalizes the row (review fix #3) ──
+def test_start_sweep_marks_row_failed_on_popen_error(monkeypatch, tmp_path):
+    tracker_service._migrated_paths.clear()
+    db_path = _seed_db(tmp_path)
+    monkeypatch.setattr(ss, "SWEEP_PROC_FILE", tmp_path / "sweep_process.json")
+    monkeypatch.setattr(ss, "probe_browser_bridge", lambda: None)
+
+    def _boom(*a, **k):
+        raise OSError("uv not found")
+
+    monkeypatch.setattr(ss.subprocess, "Popen", _boom)
+
+    try:
+        ss.start_sweep(db_path=db_path)
+        assert False, "expected OSError"
+    except OSError:
+        pass
+
+    # The inserted row must be finalized, not left 'running'.
+    assert ss.get_sweeps(db_path)[0]["status"] == "failed"
+    tracker_service._migrated_paths.clear()

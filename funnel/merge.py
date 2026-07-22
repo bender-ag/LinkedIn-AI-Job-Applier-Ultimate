@@ -51,6 +51,10 @@ def _skills_json(skills: Any) -> str | None:
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
+    # WAL lets the sweep subprocess (a concurrent writer to this file) and the
+    # dashboard's readers proceed without blocking each other. Persists on the
+    # DB file once set.
+    conn.execute("PRAGMA journal_mode=WAL")
     conn.execute(CREATE_JOBS_SQL)
     conn.commit()
 

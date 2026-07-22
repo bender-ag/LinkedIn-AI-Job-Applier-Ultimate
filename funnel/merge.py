@@ -54,6 +54,25 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     conn.execute(CREATE_JOBS_SQL)
     conn.commit()
 
+    # Idempotent migration: add missing columns to jobs table
+    cursor = conn.execute("PRAGMA table_info(jobs)")
+    existing_columns = {row[1] for row in cursor.fetchall()}
+
+    new_columns = [
+        ("status", "TEXT DEFAULT 'new'"),
+        ("notes", "TEXT DEFAULT ''"),
+        ("applied_date", "TEXT"),
+        ("tailored_resume_path", "TEXT"),
+        ("tailored_cover_path", "TEXT"),
+        ("updated_at", "TEXT"),
+    ]
+
+    for col_name, col_def in new_columns:
+        if col_name not in existing_columns:
+            conn.execute(f"ALTER TABLE jobs ADD COLUMN {col_name} {col_def}")
+
+    conn.commit()
+
 
 def merge_jobs(yaml_path: Path, db_path: Path) -> tuple[int, int]:
     """Upsert jobs from YAML into SQLite. Returns (new_count, updated_count)."""
@@ -122,6 +141,8 @@ def merge_jobs(yaml_path: Path, db_path: Path) -> tuple[int, int]:
                 )
                 new_count += 1
             else:
+                # Update only metadata, never overwrite user-owned columns
+                # (status, notes, applied_date, tailored_resume_path, tailored_cover_path, updated_at)
                 conn.execute(
                     """
                     UPDATE jobs SET

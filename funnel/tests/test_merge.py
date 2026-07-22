@@ -126,3 +126,142 @@ def test_missing_yaml_handled(tmp_path: Path, capsys):
     out = capsys.readouterr().out
     assert "not found" in out.lower() or "nothing to merge" in out.lower()
     assert not db_path.exists()
+
+
+def test_schema_migration_adds_user_owned_columns(tmp_path: Path):
+    """ensure_schema idempotently adds user-owned columns to legacy DB."""
+    from funnel.merge import ensure_schema
+
+    db_path = tmp_path / "funnel.db"
+
+    # Create a DB with old schema (missing the new columns)
+    conn = sqlite3.connect(db_path)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS jobs (
+            url TEXT PRIMARY KEY,
+            job_title TEXT,
+            company_name TEXT,
+            location TEXT,
+            job_description TEXT,
+            company_description TEXT,
+            salary_range TEXT,
+            posted_date TEXT,
+            interest_score INTEGER,
+            interest_reason TEXT,
+            skills TEXT,
+            first_seen TEXT,
+            last_seen TEXT,
+            digested INTEGER DEFAULT 0
+        )
+        """)
+    conn.execute(
+        """
+        INSERT INTO jobs (url, job_title, company_name, first_seen, last_seen)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (
+            "https://example.com/job/legacy",
+            "Legacy Job",
+            "Old Company",
+            "2026-01-01T00:00:00",
+            "2026-01-02T00:00:00",
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    # Run ensure_schema — should add missing columns
+    conn = sqlite3.connect(db_path)
+    ensure_schema(conn)
+    conn.close()
+
+    # Verify columns exist
+    conn = sqlite3.connect(db_path)
+    cursor = conn.execute("PRAGMA table_info(jobs)")
+    columns = {row[1] for row in cursor.fetchall()}
+    conn.close()
+
+    assert "status" in columns
+    assert "notes" in columns
+    assert "applied_date" in columns
+    assert "tailored_resume_path" in columns
+    assert "tailored_cover_path" in columns
+    assert "updated_at" in columns
+
+
+def test_schema_migration_idempotent(tmp_path: Path):
+    """ensure_schema is idempotent — re-running adds no duplicates."""
+    from funnel.merge import ensure_schema
+
+    db_path = tmp_path / "funnel.db"
+
+    conn = sqlite3.connect(db_path)
+    ensure_schema(conn)
+    conn.close()
+
+    # Run again
+    conn = sqlite3.connect(db_path)
+    ensure_schema(conn)
+    conn.close()
+
+    # Verify no errors and table still valid
+    conn = sqlite3.connect(db_path)
+    cursor = conn.execute("PRAGMA table_info(jobs)")
+    columns = list(cursor.fetchall())
+    conn.close()
+
+    # Should have exactly 20 columns (old 14 + new 6)
+    assert len(columns) == 20
+
+
+def test_merge_preserves_user_owned_columns(tmp_path: Path):
+    """Merging existing job does NOT overwrite user-owned columns."""
+    yaml_path = tmp_path / "jobs.yaml"
+    db_path = tmp_path / "funnel.db"
+    job = {
+        "url": "https://example.com/job/1",
+        "job_title": "Engineer",
+        "company_name": "Acme",
+        "job_description": "Build things",
+        "interest_score": 80,
+    }
+    _write_yaml(yaml_path, [job])
+
+    # First merge
+    new, updated = merge_jobs(yaml_path, db_path)
+    assert new == 1
+
+    # Manually set user-owned columns
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """
+        UPDATE jobs SET status = ?, notes = ?, applied_date = ?
+        WHERE url = ?
+        """,
+        ("applied", "Good fit!", "2026-07-15", job["url"]),
+    )
+    conn.commit()
+    conn.close()
+
+    # Verify they were set
+    row = _fetch(db_path, job["url"])
+    assert row["status"] == "applied"
+    assert row["notes"] == "Good fit!"
+    assert row["applied_date"] == "2026-07-15"
+
+    # Re-merge with changed metadata
+    job["interest_score"] = 90
+    job["job_description"] = "Build more things"
+    _write_yaml(yaml_path, [job])
+    new, updated = merge_jobs(yaml_path, db_path)
+    assert updated == 1
+
+    # User-owned columns should NOT change
+    row = _fetch(db_path, job["url"])
+    assert row["status"] == "applied"
+    assert row["notes"] == "Good fit!"
+    assert row["applied_date"] == "2026-07-15"
+
+    # But metadata should be updated
+    assert row["interest_score"] == 90
+    assert row["job_description"] == "Build more things"

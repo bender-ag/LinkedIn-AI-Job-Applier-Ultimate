@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from typing import Any, Dict
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -41,6 +41,11 @@ from src.dashboard.runtime import (
     sync_process_state,
     terminate_running_process,
 )
+from src.dashboard.tracker_service import get_jobs as get_tracker_jobs
+from src.dashboard.tracker_service import (
+    status_counts,
+    update_job,
+)
 
 STATIC_DIR = ROOT_DIR / "src" / "dashboard" / "static"
 SITE_NAME = "LinkedIn" if JOB_SITE == "linkedin" else "Indeed"
@@ -52,6 +57,13 @@ class SearchConfigPayload(BaseModel):
 
 class AppConfigPayload(BaseModel):
     config: Dict[str, Any]
+
+
+class UpdateJobPayload(BaseModel):
+    url: str
+    status: str | None = None
+    notes: str | None = None
+    applied_date: str | None = None
 
 
 @asynccontextmanager
@@ -72,8 +84,13 @@ app = FastAPI(title=f"{SITE_NAME} AI Job Applier Dashboard", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
-@app.get("/", response_class=HTMLResponse)
-async def index() -> HTMLResponse:
+@app.get("/")
+async def tracker_index() -> FileResponse:
+    return FileResponse(STATIC_DIR / "tracker.html")
+
+
+@app.get("/ops", response_class=HTMLResponse)
+async def ops_index() -> HTMLResponse:
     return HTMLResponse((STATIC_DIR / "index.html").read_text(encoding="utf-8"))
 
 
@@ -256,3 +273,36 @@ async def stream_events(
             await asyncio.sleep(1)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@app.get("/api/tracker/jobs")
+def tracker_jobs(
+    status: str | None = Query(default=None),
+    search: str | None = Query(default=None),
+) -> JSONResponse:
+    jobs = get_tracker_jobs(status=status, search=search)
+    return JSONResponse({"jobs": jobs})
+
+
+@app.patch("/api/tracker/jobs")
+def update_tracker_job(payload: UpdateJobPayload) -> JSONResponse:
+    try:
+        fields = {}
+        if payload.status is not None:
+            fields["status"] = payload.status
+        if payload.notes is not None:
+            fields["notes"] = payload.notes
+        if payload.applied_date is not None:
+            fields["applied_date"] = payload.applied_date
+
+        updated = update_job(payload.url, fields)
+        return JSONResponse(updated)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/tracker/summary")
+def tracker_summary() -> JSONResponse:
+    return JSONResponse(status_counts())

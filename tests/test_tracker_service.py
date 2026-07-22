@@ -1,0 +1,587 @@
+"""Tests for tracker_service — job tracking and scoring."""
+
+from __future__ import annotations
+
+import sqlite3
+from pathlib import Path
+
+from funnel.merge import merge_jobs
+from src.dashboard.tracker_service import (
+    STATUSES,
+    get_jobs,
+    status_counts,
+    update_job,
+)
+
+
+def _write_yaml_jobs(path: Path, jobs: list[dict]) -> None:
+    """Write test jobs to YAML file."""
+    import yaml
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.dump(jobs), encoding="utf-8")
+
+
+def _write_resume(path: Path, text: str) -> None:
+    """Write resume text to file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def test_get_jobs_empty_db(tmp_path: Path):
+    """get_jobs on non-existent DB returns empty list."""
+    db_path = tmp_path / "funnel.db"
+    jobs = get_jobs(db_path=db_path)
+    assert jobs == []
+
+
+def test_get_jobs_with_migration(tmp_path: Path):
+    """get_jobs exercises the migration path (new columns added)."""
+    yaml_path = tmp_path / "jobs.yaml"
+    db_path = tmp_path / "funnel.db"
+
+    _write_yaml_jobs(
+        yaml_path,
+        [
+            {
+                "url": "https://example.com/job/1",
+                "job_title": "Engineer",
+                "company_name": "Acme",
+                "location": "Remote",
+                "job_description": "Python Django backend engineer",
+                "interest_score": 80,
+            }
+        ],
+    )
+
+    # Merge to create DB
+    new, updated = merge_jobs(yaml_path, db_path)
+    assert new == 1
+
+    # Fetch jobs — migration should have added status, notes, etc.
+    jobs = get_jobs(db_path=db_path)
+    assert len(jobs) == 1
+    job = jobs[0]
+
+    # Check migrated columns exist and have defaults
+    assert job["status"] == "new"  # Default status
+    assert job["notes"] == ""
+    assert job["applied_date"] is None
+    assert job["tailored_resume_path"] is None
+    assert job["tailored_cover_path"] is None
+    # updated_at might be None if not set by merge
+
+
+def test_get_jobs_computes_kw_score_with_resume(tmp_path: Path):
+    """get_jobs computes kw_score, band, missing when resume exists."""
+    yaml_path = tmp_path / "jobs.yaml"
+    db_path = tmp_path / "funnel.db"
+    resume_path = tmp_path / "resume.txt"
+
+    resume_text = (
+        "Python expert with Django, REST APIs, PostgreSQL, "
+        "AWS, Docker, Kubernetes experience. Senior engineer."
+    )
+    _write_resume(resume_path, resume_text)
+
+    _write_yaml_jobs(
+        yaml_path,
+        [
+            {
+                "url": "https://example.com/job/1",
+                "job_title": "Backend Engineer",
+                "company_name": "Acme",
+                "job_description": (
+                    "We seek a Python Django developer with "
+                    "REST API, PostgreSQL, Docker skills. "
+                    "Kubernetes a plus. AWS experience required."
+                ),
+                "interest_score": 80,
+            }
+        ],
+    )
+
+    merge_jobs(yaml_path, db_path)
+
+    # Patch the resume path for testing
+    import src.dashboard.tracker_service as ts
+
+    original_resume_path = ts.RESUME_PATH
+    ts.RESUME_PATH = resume_path
+
+    try:
+        jobs = get_jobs(db_path=db_path)
+        assert len(jobs) == 1
+        job = jobs[0]
+
+        # Should have computed score
+        assert job["kw_score"] is not None
+        assert isinstance(job["kw_score"], int)
+        assert job["band"] in ["strong", "partial", "weak"]
+        assert isinstance(job["missing"], list)
+    finally:
+        ts.RESUME_PATH = original_resume_path
+
+
+def test_get_jobs_no_score_without_resume(tmp_path: Path):
+    """get_jobs returns None for kw_score when resume is missing."""
+    yaml_path = tmp_path / "jobs.yaml"
+    db_path = tmp_path / "funnel.db"
+    missing_resume = tmp_path / "missing.txt"
+
+    _write_yaml_jobs(
+        yaml_path,
+        [
+            {
+                "url": "https://example.com/job/1",
+                "job_title": "Engineer",
+                "company_name": "Acme",
+                "job_description": "Python and Django",
+            }
+        ],
+    )
+
+    merge_jobs(yaml_path, db_path)
+
+    # Patch to non-existent resume path
+    import src.dashboard.tracker_service as ts
+
+    original_resume_path = ts.RESUME_PATH
+    ts.RESUME_PATH = missing_resume
+
+    try:
+        jobs = get_jobs(db_path=db_path)
+        job = jobs[0]
+        assert job["kw_score"] is None
+        assert job["band"] == ""
+        assert job["missing"] == []
+    finally:
+        ts.RESUME_PATH = original_resume_path
+
+
+def test_get_jobs_filters_by_status(tmp_path: Path):
+    """get_jobs status filter works."""
+    yaml_path = tmp_path / "jobs.yaml"
+    db_path = tmp_path / "funnel.db"
+
+    _write_yaml_jobs(
+        yaml_path,
+        [
+            {
+                "url": "https://example.com/job/1",
+                "job_title": "Job A",
+                "company_name": "Acme",
+                "job_description": "test",
+            },
+            {
+                "url": "https://example.com/job/2",
+                "job_title": "Job B",
+                "company_name": "Beta",
+                "job_description": "test",
+            },
+        ],
+    )
+
+    merge_jobs(yaml_path, db_path)
+
+    # All jobs default to "new"
+    all_jobs = get_jobs(db_path=db_path)
+    assert len(all_jobs) == 2
+
+    # Filter by status="new"
+    new_jobs = get_jobs(db_path=db_path, status="new")
+    assert len(new_jobs) == 2
+
+    # Update one to "interested"
+    update_job("https://example.com/job/1", {"status": "interested"}, db_path=db_path)
+
+    # Filter again
+    new_jobs = get_jobs(db_path=db_path, status="new")
+    assert len(new_jobs) == 1
+    assert new_jobs[0]["job_title"] == "Job B"
+
+    interested_jobs = get_jobs(db_path=db_path, status="interested")
+    assert len(interested_jobs) == 1
+    assert interested_jobs[0]["job_title"] == "Job A"
+
+
+def test_get_jobs_filters_by_search(tmp_path: Path):
+    """get_jobs search filter works (case-insensitive substring)."""
+    yaml_path = tmp_path / "jobs.yaml"
+    db_path = tmp_path / "funnel.db"
+
+    _write_yaml_jobs(
+        yaml_path,
+        [
+            {
+                "url": "https://example.com/job/1",
+                "job_title": "Python Engineer",
+                "company_name": "Acme Inc",
+                "location": "San Francisco",
+                "job_description": "test",
+            },
+            {
+                "url": "https://example.com/job/2",
+                "job_title": "Ruby Developer",
+                "company_name": "Beta Corp",
+                "location": "New York",
+                "job_description": "test",
+            },
+        ],
+    )
+
+    merge_jobs(yaml_path, db_path)
+
+    # Search title
+    python_jobs = get_jobs(db_path=db_path, search="python")
+    assert len(python_jobs) == 1
+    assert python_jobs[0]["job_title"] == "Python Engineer"
+
+    # Search company
+    beta_jobs = get_jobs(db_path=db_path, search="beta")
+    assert len(beta_jobs) == 1
+    assert beta_jobs[0]["company_name"] == "Beta Corp"
+
+    # Search location
+    sf_jobs = get_jobs(db_path=db_path, search="san")
+    assert len(sf_jobs) == 1
+    assert sf_jobs[0]["location"] == "San Francisco"
+
+
+def test_update_job_happy_path(tmp_path: Path):
+    """update_job updates allowed fields and sets updated_at."""
+    yaml_path = tmp_path / "jobs.yaml"
+    db_path = tmp_path / "funnel.db"
+
+    _write_yaml_jobs(
+        yaml_path,
+        [
+            {
+                "url": "https://example.com/job/1",
+                "job_title": "Engineer",
+                "company_name": "Acme",
+                "job_description": "test",
+            }
+        ],
+    )
+
+    merge_jobs(yaml_path, db_path)
+
+    # Update
+    updated = update_job(
+        "https://example.com/job/1",
+        {"status": "applied", "notes": "Good fit", "applied_date": "2026-07-21"},
+        db_path=db_path,
+    )
+
+    assert updated["status"] == "applied"
+    assert updated["notes"] == "Good fit"
+    assert updated["applied_date"] == "2026-07-21"
+    assert updated["updated_at"] is not None
+
+
+def test_update_job_invalid_status_raises(tmp_path: Path):
+    """update_job raises ValueError on invalid status."""
+    yaml_path = tmp_path / "jobs.yaml"
+    db_path = tmp_path / "funnel.db"
+
+    _write_yaml_jobs(
+        yaml_path,
+        [
+            {
+                "url": "https://example.com/job/1",
+                "job_title": "Engineer",
+                "company_name": "Acme",
+                "job_description": "test",
+            }
+        ],
+    )
+
+    merge_jobs(yaml_path, db_path)
+
+    try:
+        update_job(
+            "https://example.com/job/1",
+            {"status": "invalid_status"},
+            db_path=db_path,
+        )
+        assert False, "Should have raised ValueError"
+    except ValueError as e:
+        assert "invalid" in str(e).lower()
+
+
+def test_update_job_unknown_url_raises(tmp_path: Path):
+    """update_job raises KeyError on unknown url."""
+    db_path = tmp_path / "funnel.db"
+
+    try:
+        update_job("https://unknown.com", {"status": "applied"}, db_path=db_path)
+        assert False, "Should have raised KeyError"
+    except KeyError:
+        pass
+
+
+def test_update_job_ignores_unknown_fields(tmp_path: Path):
+    """update_job only updates allowed fields; ignores others."""
+    yaml_path = tmp_path / "jobs.yaml"
+    db_path = tmp_path / "funnel.db"
+
+    _write_yaml_jobs(
+        yaml_path,
+        [
+            {
+                "url": "https://example.com/job/1",
+                "job_title": "Engineer",
+                "company_name": "Acme",
+                "job_description": "test",
+            }
+        ],
+    )
+
+    merge_jobs(yaml_path, db_path)
+
+    # Try to update non-allowed field (e.g., job_title)
+    updated = update_job(
+        "https://example.com/job/1",
+        {
+            "status": "applied",
+            "job_title": "HACKED",  # Should be ignored
+            "notes": "test",
+        },
+        db_path=db_path,
+    )
+
+    # Status and notes should be updated
+    assert updated["status"] == "applied"
+    assert updated["notes"] == "test"
+
+    # But job_title should NOT be changed
+    assert updated["job_title"] == "Engineer"
+
+
+def test_status_counts_empty_db(tmp_path: Path):
+    """status_counts on empty DB returns 0 for all statuses."""
+    db_path = tmp_path / "funnel.db"
+    counts = status_counts(db_path=db_path)
+
+    for status in STATUSES:
+        assert counts[status] == 0
+    assert counts["total"] == 0
+
+
+def test_status_counts_with_jobs(tmp_path: Path):
+    """status_counts tallies jobs per status, null->new."""
+    yaml_path = tmp_path / "jobs.yaml"
+    db_path = tmp_path / "funnel.db"
+
+    _write_yaml_jobs(
+        yaml_path,
+        [
+            {
+                "url": "https://example.com/job/1",
+                "job_title": "A",
+                "company_name": "Acme",
+                "job_description": "test",
+            },
+            {
+                "url": "https://example.com/job/2",
+                "job_title": "B",
+                "company_name": "Acme",
+                "job_description": "test",
+            },
+            {
+                "url": "https://example.com/job/3",
+                "job_title": "C",
+                "company_name": "Acme",
+                "job_description": "test",
+            },
+        ],
+    )
+
+    merge_jobs(yaml_path, db_path)
+
+    # All default to status=NULL -> "new"
+    counts = status_counts(db_path=db_path)
+    assert counts["new"] == 3
+    assert counts["total"] == 3
+
+    # Update two to different statuses
+    update_job("https://example.com/job/1", {"status": "applied"}, db_path=db_path)
+    update_job("https://example.com/job/2", {"status": "interviewing"}, db_path=db_path)
+
+    counts = status_counts(db_path=db_path)
+    assert counts["new"] == 1
+    assert counts["applied"] == 1
+    assert counts["interviewing"] == 1
+    assert counts["total"] == 3
+
+
+def test_status_counts_total_includes_out_of_vocab_status(tmp_path: Path):
+    """A legacy row with an unexpected status still counts toward total."""
+    yaml_path = tmp_path / "jobs.yaml"
+    db_path = tmp_path / "funnel.db"
+    _write_yaml_jobs(
+        yaml_path,
+        [{"url": "https://example.com/job/1", "job_title": "A", "job_description": "x"}],
+    )
+    merge_jobs(yaml_path, db_path)
+
+    # Write an out-of-vocab status directly (bypassing update_job validation).
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "UPDATE jobs SET status = 'legacy_weird' WHERE url = ?", ("https://example.com/job/1",)
+    )
+    conn.commit()
+    conn.close()
+
+    counts = status_counts(db_path=db_path)
+    assert all(counts[s] == 0 for s in STATUSES)  # not in any known tile
+    assert counts["total"] == 1  # but still counted
+
+
+def test_get_jobs_truncates_long_description(tmp_path: Path):
+    """job_description is truncated server-side for payload size."""
+    yaml_path = tmp_path / "jobs.yaml"
+    db_path = tmp_path / "funnel.db"
+    _write_yaml_jobs(
+        yaml_path,
+        [{"url": "https://example.com/job/1", "job_title": "A", "job_description": "x" * 5000}],
+    )
+    merge_jobs(yaml_path, db_path)
+
+    jobs = get_jobs(db_path=db_path)
+    assert len(jobs[0]["job_description"]) <= 800
+
+
+def test_get_jobs_filters_before_scoring(tmp_path: Path):
+    """get_jobs filters by status/search before scoring (efficiency refactor)."""
+    yaml_path = tmp_path / "jobs.yaml"
+    db_path = tmp_path / "funnel.db"
+
+    _write_yaml_jobs(
+        yaml_path,
+        [
+            {
+                "url": "https://example.com/job/1",
+                "job_title": "Python Engineer",
+                "company_name": "Acme",
+                "location": "Remote",
+                "job_description": "Python Django engineer role",
+                "interest_score": 80,
+            },
+            {
+                "url": "https://example.com/job/2",
+                "job_title": "Java Developer",
+                "company_name": "Beta",
+                "location": "Remote",
+                "job_description": "Java Spring developer role",
+                "interest_score": 80,
+            },
+            {
+                "url": "https://example.com/job/3",
+                "job_title": "Python Analyst",
+                "company_name": "Gamma",
+                "location": "Remote",
+                "job_description": "Python data analyst role",
+                "interest_score": 80,
+            },
+        ],
+    )
+
+    merge_jobs(yaml_path, db_path)
+
+    # Mark one job as "applied" for status filtering
+    update_job("https://example.com/job/2", {"status": "applied"}, db_path=db_path)
+
+    # Test status filter: only "new" jobs (should skip job/2)
+    new_jobs = get_jobs(db_path=db_path, status="new")
+    assert len(new_jobs) == 2
+    new_urls = {j["url"] for j in new_jobs}
+    assert "https://example.com/job/1" in new_urls
+    assert "https://example.com/job/3" in new_urls
+
+    # Test search filter: only "Python" in title (should get job/1 and job/3)
+    python_jobs = get_jobs(db_path=db_path, search="python")
+    assert len(python_jobs) == 2
+    python_urls = {j["url"] for j in python_jobs}
+    assert "https://example.com/job/1" in python_urls
+    assert "https://example.com/job/3" in python_urls
+
+    # Test both filters: status="new" AND search="Engineer"
+    # (should only get job/1: Python Engineer, status new)
+    filtered = get_jobs(db_path=db_path, status="new", search="engineer")
+    assert len(filtered) == 1
+    assert filtered[0]["url"] == "https://example.com/job/1"
+    assert filtered[0]["status"] == "new"
+    assert filtered[0]["job_title"] == "Python Engineer"
+
+    # Test that filtered-out rows are not in the result
+    # (job/2 is "applied", not "new")
+    applied_jobs = get_jobs(db_path=db_path, status="applied")
+    assert len(applied_jobs) == 1
+    assert applied_jobs[0]["url"] == "https://example.com/job/2"
+
+    # Verify filtering works: when we request "new" jobs, applied jobs are excluded
+    all_new = get_jobs(db_path=db_path, status="new")
+    all_new_urls = {j["url"] for j in all_new}
+    assert "https://example.com/job/2" not in all_new_urls
+
+
+def test_get_jobs_memoizes_migration(tmp_path: Path, monkeypatch):
+    """Schema migration runs once per db_path across calls, and again per new path.
+
+    Spies on the ensure_schema the service actually invokes, so the test fails
+    if the memo (Fix 5) is removed — not just that two calls return equal rows.
+    """
+    import src.dashboard.tracker_service as ts
+
+    yaml_path = tmp_path / "jobs.yaml"
+    db_path = tmp_path / "funnel.db"
+    _write_yaml_jobs(
+        yaml_path,
+        [
+            {
+                "url": "https://example.com/job/1",
+                "job_title": "Engineer",
+                "company_name": "Acme",
+                "job_description": "test",
+            }
+        ],
+    )
+    # merge_jobs migrates via funnel.merge.ensure_schema directly (memo untouched).
+    merge_jobs(yaml_path, db_path)
+
+    # Isolate the memo, then count migrations the service triggers.
+    ts._migrated_paths.clear()
+    calls = {"n": 0}
+    real_ensure = ts.ensure_schema
+
+    def counting_ensure(conn):
+        calls["n"] += 1
+        return real_ensure(conn)
+
+    monkeypatch.setattr(ts, "ensure_schema", counting_ensure)
+
+    get_jobs(db_path=db_path)
+    get_jobs(db_path=db_path)
+    assert calls["n"] == 1  # migrated once despite two get_jobs calls
+
+    # A distinct db_path migrates independently (memo is per-path).
+    other_db = tmp_path / "other.db"
+    other_yaml = tmp_path / "other.yaml"
+    _write_yaml_jobs(
+        other_yaml,
+        [
+            {
+                "url": "https://example.com/other/1",
+                "job_title": "Manager",
+                "company_name": "Beta",
+                "job_description": "test",
+            }
+        ],
+    )
+    merge_jobs(other_yaml, other_db)
+    get_jobs(db_path=other_db)
+    assert calls["n"] == 2  # second path triggers another migration
+
+    ts._migrated_paths.clear()  # don't leak these paths into other tests

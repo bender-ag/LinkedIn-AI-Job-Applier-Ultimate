@@ -108,6 +108,11 @@ async def tracker_history_page() -> FileResponse:
     return FileResponse(STATIC_DIR / "history.html")
 
 
+@app.get("/settings")
+async def tracker_settings_page() -> FileResponse:
+    return FileResponse(STATIC_DIR / "settings.html")
+
+
 @app.get("/ops", response_class=HTMLResponse)
 async def ops_index() -> HTMLResponse:
     return HTMLResponse((STATIC_DIR / "index.html").read_text(encoding="utf-8"))

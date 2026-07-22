@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pytest
 import yaml
 
 from src.dashboard import data_service
@@ -337,8 +338,7 @@ def test_get_run_jobs_builds_status_from_events(monkeypatch):
     assert len(jobs) == 2
     assert any(job["status"] == "applied" and job["interest_score"] == 92 for job in jobs)
     assert any(
-        job["status"] == "applied"
-        and job["submitted_resume_path"] == "/tmp/resumes/cto.pdf"
+        job["status"] == "applied" and job["submitted_resume_path"] == "/tmp/resumes/cto.pdf"
         for job in jobs
     )
     assert any(
@@ -652,3 +652,52 @@ def test_update_app_config_updates_values(monkeypatch, tmp_path):
     assert "HEADLESS_MODE = False" in file_content
     assert "MAX_APPLIES_NUM = 25" in file_content
     assert 'RESUME_STYLE = "Modern Blue"' in file_content
+
+
+def _write_app_config(tmp_path, monkeypatch, body):
+    app_config_file = tmp_path / "app_config.py"
+    app_config_file.write_text(body, encoding="utf-8")
+    monkeypatch.setattr(data_service, "APP_CONFIG_FILE", app_config_file)
+    return app_config_file
+
+
+def test_update_app_config_keeps_float_type_for_whole_number(tmp_path, monkeypatch):
+    # TEMPERATURE is a float; a whole-number edit must stay a float, not become int.
+    app_config_file = _write_app_config(tmp_path, monkeypatch, "TEMPERATURE = 0.4\n")
+
+    updated = data_service.update_app_config({"TEMPERATURE": 1})
+
+    assert isinstance(updated["TEMPERATURE"], float)
+    assert updated["TEMPERATURE"] == 1.0
+    assert "TEMPERATURE = 1.0" in app_config_file.read_text(encoding="utf-8")
+
+
+def test_update_app_config_rejects_decimal_for_int_key(tmp_path, monkeypatch):
+    _write_app_config(tmp_path, monkeypatch, "MAX_APPLIES_NUM = 50\n")
+
+    with pytest.raises(ValueError, match="MAX_APPLIES_NUM must be an integer"):
+        data_service.update_app_config({"MAX_APPLIES_NUM": 3.5})
+
+
+def test_update_app_config_rejects_wrong_type_for_bool_key(tmp_path, monkeypatch):
+    _write_app_config(tmp_path, monkeypatch, "HEADLESS_MODE = True\n")
+
+    with pytest.raises(ValueError, match="HEADLESS_MODE must be true or false"):
+        data_service.update_app_config({"HEADLESS_MODE": "yes"})
+
+
+def test_update_app_config_allows_null_for_nullable_string(tmp_path, monkeypatch):
+    # RESUME_STYLE = None means "prompt interactively"; null must round-trip.
+    app_config_file = _write_app_config(tmp_path, monkeypatch, "RESUME_STYLE = None\n")
+
+    updated = data_service.update_app_config({"RESUME_STYLE": None})
+
+    assert updated["RESUME_STYLE"] is None
+    assert "RESUME_STYLE = None" in app_config_file.read_text(encoding="utf-8")
+
+
+def test_update_app_config_rejects_number_for_string_key(tmp_path, monkeypatch):
+    _write_app_config(tmp_path, monkeypatch, 'LLM_MODEL_TYPE = "gemini"\n')
+
+    with pytest.raises(ValueError, match="LLM_MODEL_TYPE must be text or empty"):
+        data_service.update_app_config({"LLM_MODEL_TYPE": 5})

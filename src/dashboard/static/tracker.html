@@ -18,17 +18,6 @@
       gap: 1rem;
     }
 
-    .tracker-nav a {
-      color: var(--accent);
-      text-decoration: none;
-      font-size: 0.9rem;
-      font-weight: 600;
-    }
-
-    .tracker-nav a:hover {
-      text-decoration: underline;
-    }
-
     /* Sweep controls */
     .sweep-btn {
       border-radius: 7px;
@@ -459,8 +448,10 @@
     <!-- Header -->
     <section class="panel tracker-hero">
       <h1>Job Funnel</h1>
-      <nav class="tracker-nav">
-        <a href="/history">History &rarr;</a>
+      <nav class="tab-nav">
+        <a href="/" class="tab active">Tracker</a>
+        <a href="/history" class="tab">History</a>
+        <a href="/settings" class="tab">Settings</a>
       </nav>
     </section>
 
@@ -514,7 +505,7 @@
 
     <!-- Footer -->
     <section class="tracker-footer">
-      <p>digest: <a href="/artifacts">/artifacts</a> · history: <a href="/history">/history</a> · ops: <a href="/ops">/ops</a></p>
+      <p>digest: <a href="/artifacts">/artifacts</a> · ops: <a href="/ops">/ops</a></p>
     </section>
   </main>
 

@@ -24,17 +24,6 @@
       letter-spacing: -0.02em;
     }
 
-    .hist-hero nav a {
-      color: var(--accent);
-      text-decoration: none;
-      font-size: 0.9rem;
-      font-weight: 600;
-    }
-
-    .hist-hero nav a:hover {
-      text-decoration: underline;
-    }
-
     .hist-section-title {
       margin: 0 0 0.8rem;
       font-size: 0.95rem;
@@ -197,7 +186,11 @@
   <main class="layout">
     <section class="panel hist-hero">
       <h1>History</h1>
-      <nav><a href="/">&larr; Tracker</a></nav>
+      <nav class="tab-nav">
+        <a href="/" class="tab">Tracker</a>
+        <a href="/history" class="tab active">History</a>
+        <a href="/settings" class="tab">Settings</a>
+      </nav>
     </section>
 
     <!-- LLM stats (tailoring cost) -->
@@ -238,7 +231,7 @@
     </section>
 
     <section class="tracker-footer">
-      <p>tracker: <a href="/">/</a> · digest: <a href="/artifacts">/artifacts</a> · ops: <a href="/ops">/ops</a></p>
+      <p>digest: <a href="/artifacts">/artifacts</a> · ops: <a href="/ops">/ops</a></p>
     </section>
   </main>
 

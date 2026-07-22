@@ -284,6 +284,59 @@
       gap: 0.4rem;
     }
 
+    /* Tailor action row */
+    .tailor-section {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      gap: 0.9rem;
+      flex-wrap: wrap;
+      padding-top: 0.2rem;
+    }
+
+    .tailor-btn {
+      border-radius: 7px;
+      border: 1px solid var(--accent);
+      background: var(--accent-dim);
+      color: var(--accent);
+      padding: 0.45rem 0.9rem;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .tailor-btn:hover:not(:disabled) {
+      box-shadow: 0 0 14px var(--accent-glow);
+    }
+
+    .tailor-btn:disabled {
+      opacity: 0.6;
+      cursor: default;
+    }
+
+    .tailor-links {
+      display: flex;
+      gap: 0.9rem;
+      flex-wrap: wrap;
+    }
+
+    .tailor-links a {
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 0.85rem;
+    }
+
+    .tailor-links a:hover {
+      text-decoration: underline;
+    }
+
+    .tailor-cost {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+
     .keyword-badge {
       display: inline-block;
       padding: 0.25rem 0.5rem;

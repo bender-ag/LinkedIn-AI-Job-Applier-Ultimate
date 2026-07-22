@@ -136,6 +136,65 @@ async function updateJob(url, updates) {
   }
 }
 
+/**
+ * Build the résumé / cover-letter links for a tailored job (empty if none)
+ */
+function buildTailorLinks(job) {
+  const links = [];
+  if (job.tailored_resume_path) {
+    links.push(
+      `<a href="/api/tracker/file?path=${encodeURIComponent(job.tailored_resume_path)}" target="_blank" rel="noopener">Résumé PDF</a>`
+    );
+  }
+  if (job.tailored_cover_path) {
+    links.push(
+      `<a href="/api/tracker/file?path=${encodeURIComponent(job.tailored_cover_path)}" target="_blank" rel="noopener">Cover letter</a>`
+    );
+  }
+  return links.join("");
+}
+
+/**
+ * Re-open (and scroll to) a job's expand row after a re-render
+ */
+function reopenRow(url) {
+  const expandRow = document.querySelector(
+    `.expand-row[data-url="${CSS.escape(url)}"]`
+  );
+  if (expandRow) {
+    expandRow.classList.add("open");
+    expandRow.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+}
+
+/**
+ * Generate a tailored résumé + cover letter for a job
+ */
+async function tailorJob(url, btn) {
+  btn.disabled = true;
+  const original = btn.textContent;
+  btn.textContent = "Tailoring… (up to a minute)";
+  try {
+    const response = await fetch("/api/tracker/jobs/tailor", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${response.status}`);
+    }
+    // Refresh rows (per-job cost + links), then re-open the row.
+    await fetchJobs();
+    reopenRow(url);
+  } catch (error) {
+    console.error("Tailoring failed:", error);
+    showError(`Tailoring failed: ${error.message}`);
+    btn.disabled = false;
+    btn.textContent = original;
+  }
+}
+
 // ──── RENDERING FUNCTIONS ────
 /**
  * Render status tiles
@@ -176,9 +235,12 @@ function renderStatusTiles() {
     statusTilesContainer.appendChild(tile);
   });
 
-  // Add Total tile
+  // Add Total tile — clicking it clears the status filter (shows all)
   const totalTile = document.createElement("div");
   totalTile.className = "status-tile";
+  if (currentFilterStatus === null) {
+    totalTile.classList.add("active");
+  }
   const totalLabel = document.createElement("span");
   totalLabel.className = "status-tile-label";
   totalLabel.textContent = "Total";
@@ -187,6 +249,12 @@ function renderStatusTiles() {
   totalCount.textContent = summary.total || 0;
   totalTile.appendChild(totalLabel);
   totalTile.appendChild(totalCount);
+  totalTile.addEventListener("click", () => {
+    currentFilterStatus = null;
+    statusFilter.value = "";
+    renderStatusTiles();
+    filterAndRenderJobs();
+  });
   statusTilesContainer.appendChild(totalTile);
 }
 
@@ -338,6 +406,13 @@ function renderJobs() {
                     }
                   </div>
                 </div>
+                <div class="expand-section tailor-section">
+                  <button class="tailor-btn" data-url="${jobUrl}">
+                    ${job.tailored_resume_path ? "Re-tailor" : "Tailor résumé + cover"}
+                  </button>
+                  <span class="tailor-links">${buildTailorLinks(job)}</span>
+                  ${job.tailor_cost ? `<span class="tailor-cost">$${Number(job.tailor_cost).toFixed(4)}</span>` : ""}
+                </div>
                 <div class="job-description-preview">${escapeHtml((job.job_description || "").substring(0, 600))}</div>
               </div>
             </div>
@@ -396,6 +471,14 @@ function attachJobEventListeners() {
       const url = e.target.dataset.url;
       const appliedDate = e.target.value;
       await updateJob(url, { applied_date: appliedDate });
+    });
+  });
+
+  // Tailor button
+  document.querySelectorAll(".tailor-btn").forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      await tailorJob(btn.dataset.url, btn);
     });
   });
 }

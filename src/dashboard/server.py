@@ -25,6 +25,7 @@ from src.dashboard.data_service import (
     update_app_config,
     update_search_config,
 )
+from src.dashboard.llm_stats import llm_totals
 from src.dashboard.runtime import (
     LATEST_SCREENSHOT_FILE,
     ROOT_DIR,
@@ -41,6 +42,7 @@ from src.dashboard.runtime import (
     sync_process_state,
     terminate_running_process,
 )
+from src.dashboard.tailor_service import TAILORED_DIR, JobNotFound, tailor_job
 from src.dashboard.tracker_service import get_jobs as get_tracker_jobs
 from src.dashboard.tracker_service import (
     status_counts,
@@ -64,6 +66,10 @@ class UpdateJobPayload(BaseModel):
     status: str | None = None
     notes: str | None = None
     applied_date: str | None = None
+
+
+class TailorPayload(BaseModel):
+    url: str
 
 
 @asynccontextmanager
@@ -306,3 +312,41 @@ def update_tracker_job(payload: UpdateJobPayload) -> JSONResponse:
 @app.get("/api/tracker/summary")
 def tracker_summary() -> JSONResponse:
     return JSONResponse(status_counts())
+
+
+@app.get("/api/tracker/llm-stats")
+def tracker_llm_stats() -> JSONResponse:
+    """Cumulative LLM usage (tailoring is the tracker's only LLM cost source)."""
+    return JSONResponse(llm_totals())
+
+
+@app.post("/api/tracker/jobs/tailor")
+async def tailor_tracker_job(payload: TailorPayload) -> JSONResponse:
+    """Generate a tailored résumé PDF + cover letter for one job and store paths."""
+    try:
+        updated = await tailor_job(payload.url)
+        return JSONResponse(updated)
+    except JobNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (FileNotFoundError, RuntimeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/tracker/file")
+def tracker_file(path: str = Query(...)) -> Response:
+    """Serve a tailored artifact (PDF/markdown), scoped to the tailored dir."""
+    file_path = (ROOT_DIR / path).resolve()
+    try:
+        file_path.relative_to(TAILORED_DIR.resolve())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid file path") from exc
+
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    media_type = "application/pdf" if file_path.suffix == ".pdf" else "text/plain"
+    return Response(
+        content=file_path.read_bytes(),
+        media_type=media_type,
+        headers={"Content-Disposition": f'inline; filename="{file_path.name}"'},
+    )

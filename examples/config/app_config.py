@@ -102,8 +102,9 @@ Possible values:
     - "Modern Grey"
     - "Default"
     - "Clean Blue"
+    - "Modern Minimal Red"   # custom pixel-accurate style (src/resume_builder/resume_style/style_modern_minimal_red.css)
 """
-RESUME_STYLE = None
+RESUME_STYLE = "Modern Minimal Red"
 
 """
 If LLM evaluated the 'interest' level of the job not below this threshold - the job is considered interesting for application.

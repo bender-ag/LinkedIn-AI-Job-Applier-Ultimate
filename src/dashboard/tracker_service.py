@@ -9,6 +9,7 @@ from typing import Any
 
 from funnel.merge import ensure_schema
 from funnel.score_match import score_match
+from src.dashboard.llm_stats import job_cost_map
 from src.dashboard.runtime import ROOT_DIR
 
 DB_PATH = ROOT_DIR / "data" / "funnel.db"
@@ -98,6 +99,9 @@ def get_jobs(
     # Read resume once per call
     resume_text = _read_resume(RESUME_PATH)
 
+    # Per-job LLM cost (from tailoring) — read the call log once per call.
+    cost_map = job_cost_map()
+
     jobs = []
     for row in rows:
         job_dict = dict(row)
@@ -142,6 +146,10 @@ def get_jobs(
         job_dict["band"] = band
         job_dict["matched"] = matched
         job_dict["missing"] = missing
+
+        # Per-job tailoring cost (0.0 when never tailored).
+        cost_entry = cost_map.get(job_dict.get("url") or "")
+        job_dict["tailor_cost"] = cost_entry["cost"] if cost_entry else 0.0
 
         jobs.append(job_dict)
 

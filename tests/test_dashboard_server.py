@@ -8,8 +8,15 @@ from src.dashboard.server import app
 client = TestClient(app)
 
 
-def test_index_serves_dashboard_page():
+def test_index_serves_tracker_page():
     response = client.get("/")
+
+    assert response.status_code == 200
+    assert "Job Funnel Tracker" in response.text
+
+
+def test_ops_serves_dashboard_page():
+    response = client.get("/ops")
 
     assert response.status_code == 200
     assert "Operations Dashboard" in response.text

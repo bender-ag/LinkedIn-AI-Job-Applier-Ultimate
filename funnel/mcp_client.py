@@ -41,9 +41,10 @@ class McpClient:
     def connect(self, *, retries: int = 3, backoff: float = 1.0) -> None:
         """POST initialize (with retry), capture session id, send initialized.
 
-        The Chrome DevTools bridge allows one active session; if another client
-        holds it, initialize is refused. Retry a few times so a briefly-busy
-        bridge (e.g. a just-finished run releasing its session) succeeds.
+        The bridge is multi-session — concurrent clients (including the Claude Code
+        ``browser`` server) each get their own session, so initialize is not refused
+        when another client is connected. Retry a few times only to ride out a
+        transient hiccup (e.g. the bridge still starting up).
         """
         init_payload = {
             "jsonrpc": "2.0",

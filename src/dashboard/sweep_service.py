@@ -5,11 +5,16 @@ guarded by a browser-bridge probe, tracks it via a process file, and records
 each run in the ``sweeps`` table for the History tab.
 
 The container's headless browser is Cloudflare-blocked, so the funnel collector
-drives the desktop browser through the MCP bridge — and that bridge allows only
-one active session. Before launching we probe the bridge with a lightweight
-``McpClient.connect()``; if it's unavailable or already held (e.g. by the Claude
-Code ``browser`` server), we refuse with a clear message rather than starting a
-sweep that would fail mid-collection.
+drives the desktop browser through the MCP bridge. The bridge supports *multiple*
+concurrent MCP sessions (verified 2026-07-22), so a live Claude Code ``browser``
+session does NOT block a sweep. Before launching we only probe that the bridge is
+reachable (a lightweight ``McpClient.connect()``); if it's down we refuse with a
+clear message rather than starting a sweep that would fail mid-collection.
+
+Coordination: the sweep drives its own tab (the collector opens a fresh page).
+Because all sessions share one Chrome, hand-driving the *same* tabs while a sweep
+runs can interleave on the globally selected page — avoid navigating the research
+browser during a sweep.
 
 Reuses runtime.py's process-management helpers; keeps its own process file so a
 sweep and the (legacy) apply bot never clobber each other's state.
@@ -84,7 +89,11 @@ def _sweep_pid_alive(pid: int | None) -> bool:
 
 # ── Browser-bridge guard ──
 def probe_browser_bridge() -> None:
-    """Raise BridgeUnavailable if the browser MCP bridge can't be acquired."""
+    """Raise BridgeUnavailable if the browser MCP bridge can't be reached.
+
+    The bridge is multi-session, so a live Claude Code ``browser`` session is not a
+    problem; this only fails when the bridge itself is down/unreachable.
+    """
     try:
         from funnel.mcp_client import McpClient
     except Exception as exc:  # pragma: no cover - import guard
@@ -95,9 +104,8 @@ def probe_browser_bridge() -> None:
         client.connect(retries=1)
     except Exception as exc:
         raise BridgeUnavailable(
-            "Browser bridge is unavailable or busy. Start the desktop browser "
-            "bridge and make sure no other MCP client (e.g. the Claude Code "
-            "`browser` server) is holding it, then retry."
+            "Browser bridge is unreachable. Start the desktop browser bridge "
+            "(`./service.sh browser` on the host) and retry."
         ) from exc
     finally:
         try:

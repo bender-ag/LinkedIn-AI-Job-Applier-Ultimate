@@ -24,15 +24,31 @@
       letter-spacing: -0.02em;
     }
 
-    .hist-hero nav a {
-      color: var(--accent);
-      text-decoration: none;
-      font-size: 0.9rem;
-      font-weight: 600;
+    .tab-nav {
+      display: flex;
+      gap: 0.3rem;
     }
 
-    .hist-hero nav a:hover {
-      text-decoration: underline;
+    .tab {
+      padding: 0.4rem 0.9rem;
+      border-radius: 8px;
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 0.88rem;
+      font-weight: 600;
+      border: 1px solid transparent;
+      transition: all 0.15s ease;
+    }
+
+    .tab:hover {
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .tab.active {
+      color: var(--accent);
+      background: var(--accent-dim);
+      border-color: var(--accent);
     }
 
     .hist-section-title {
@@ -197,7 +213,11 @@
   <main class="layout">
     <section class="panel hist-hero">
       <h1>History</h1>
-      <nav><a href="/settings">Settings</a> &nbsp;·&nbsp; <a href="/">&larr; Tracker</a></nav>
+      <nav class="tab-nav">
+        <a href="/" class="tab">Tracker</a>
+        <a href="/history" class="tab active">History</a>
+        <a href="/settings" class="tab">Settings</a>
+      </nav>
     </section>
 
     <!-- LLM stats (tailoring cost) -->
@@ -238,7 +258,7 @@
     </section>
 
     <section class="tracker-footer">
-      <p>tracker: <a href="/">/</a> · settings: <a href="/settings">/settings</a> · digest: <a href="/artifacts">/artifacts</a> · ops: <a href="/ops">/ops</a></p>
+      <p>digest: <a href="/artifacts">/artifacts</a> · ops: <a href="/ops">/ops</a></p>
     </section>
   </main>
 

@@ -319,6 +319,16 @@ function renderJobs() {
                   <input type="date" class="applied-date-input" data-url="${jobUrl}" value="${job.applied_date || ""}">
                 </div>
                 <div class="expand-section">
+                  <label class="expand-section-label">Matching Keywords</label>
+                  <div class="matching-keywords">
+                    ${
+                      (job.matched && job.matched.length > 0)
+                        ? job.matched.map((kw) => `<span class="keyword-badge matched">${escapeHtml(kw)}</span>`).join("")
+                        : '<span class="keyword-badge">None</span>'
+                    }
+                  </div>
+                </div>
+                <div class="expand-section">
                   <label class="expand-section-label">Missing Keywords</label>
                   <div class="missing-keywords">
                     ${

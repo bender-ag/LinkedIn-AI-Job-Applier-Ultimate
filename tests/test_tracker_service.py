@@ -119,6 +119,10 @@ def test_get_jobs_computes_kw_score_with_resume(tmp_path: Path):
         assert isinstance(job["kw_score"], int)
         assert job["band"] in ["strong", "partial", "weak"]
         assert isinstance(job["missing"], list)
+        assert isinstance(job["matched"], list)
+        # The JD overlaps the resume heavily (Python/Django/REST/PostgreSQL/Docker),
+        # so at least one matched keyword is expected.
+        assert len(job["matched"]) > 0
     finally:
         ts.RESUME_PATH = original_resume_path
 
@@ -154,6 +158,7 @@ def test_get_jobs_no_score_without_resume(tmp_path: Path):
         job = jobs[0]
         assert job["kw_score"] is None
         assert job["band"] == ""
+        assert job["matched"] == []
         assert job["missing"] == []
     finally:
         ts.RESUME_PATH = original_resume_path

@@ -70,7 +70,7 @@ def get_jobs(
     - url, job_title, company_name, location, salary_range
     - first_seen, last_seen, status, notes, applied_date
     - tailored_resume_path, tailored_cover_path
-    - kw_score (or None), band, missing (list of missing keywords, top 15)
+    - kw_score (or None), band, matched + missing (keyword lists, top 15 each)
     - job_description (full text)
 
     Filters:
@@ -119,9 +119,10 @@ def get_jobs(
             if not found:
                 continue
 
-        # Compute kw_score, band, missing (only for rows that pass filters)
+        # Compute kw_score, band, matched, missing (only for rows that pass filters)
         kw_score = None
         band = ""
+        matched = []
         missing = []
 
         if resume_text and job_dict.get("job_description"):
@@ -129,6 +130,7 @@ def get_jobs(
             if match_result.ok:
                 kw_score = match_result.score
                 band = match_result.band
+                matched = match_result.matched[:15]
                 missing = match_result.missing[:15]
 
         # The UI only shows a short preview; don't ship multi-KB JDs for every
@@ -138,6 +140,7 @@ def get_jobs(
 
         job_dict["kw_score"] = kw_score
         job_dict["band"] = band
+        job_dict["matched"] = matched
         job_dict["missing"] = missing
 
         jobs.append(job_dict)

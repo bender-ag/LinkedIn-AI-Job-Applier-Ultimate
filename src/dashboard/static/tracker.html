@@ -277,7 +277,8 @@
       resize: vertical;
     }
 
-    .missing-keywords {
+    .missing-keywords,
+    .matching-keywords {
       display: flex;
       flex-wrap: wrap;
       gap: 0.4rem;
@@ -291,6 +292,11 @@
       background: var(--surface);
       border: 1px solid var(--border);
       color: var(--muted);
+    }
+
+    .keyword-badge.matched {
+      color: #1a7f37;
+      border-color: #1a7f37;
     }
 
     .job-description-preview {

@@ -38,6 +38,16 @@ JOB_TYPE_LABELS = {
     "Part-time, Full-time",
 }
 
+# Variable-text Indeed badges (can't be exact-matched in NOISE_LABELS). If not
+# filtered they land in static_texts[0] and get mistaken for the company, shifting
+# every following field (e.g. "Often replies in 1 day" → company, real company →
+# location).
+NOISE_RE = re.compile(
+    r"^(often replies|typically responds|responds within|responds to|"
+    r"urgently hiring|hiring multiple candidates)",
+    re.IGNORECASE,
+)
+
 CARD_HEADING_RE = re.compile(r'heading "full details of (.+)" level="3"')
 CARD_BUTTON_RE = re.compile(r'uid=(\S+)\s+button "full details of')
 STATIC_TEXT_RE = re.compile(r'StaticText "([^"]*)"')
@@ -84,7 +94,7 @@ def parse_job_cards(snapshot: str) -> list[dict]:
         for line in block:
             for m in STATIC_TEXT_RE.finditer(line):
                 text = m.group(1)
-                if text in NOISE_LABELS:
+                if text in NOISE_LABELS or NOISE_RE.match(text):
                     continue
                 static_texts.append(text)
 

@@ -68,6 +68,24 @@ def test_parse_job_cards_location_skips_salary_and_job_type():
     assert cards2[0]["salary_range"] == "$120,000 a year"
 
 
+def test_parse_job_cards_skips_response_time_badge():
+    # Regression: a variable Indeed badge ("Often replies in 1 day") emitted before
+    # the company must not be taken as the company (which shifted every field).
+    snap = "\n".join(
+        [
+            'uid=3_0 heading "full details of Senior Software Engineer" level="3"',
+            'uid=3_1 button "full details of Senior Software Engineer"',
+            'uid=3_2 StaticText "Often replies in 1 day"',
+            'uid=3_3 StaticText "Hammer Media"',
+            'uid=3_4 StaticText "Remote in Austin, TX"',
+        ]
+    )
+    cards = parse_job_cards(snap)
+    assert len(cards) == 1
+    assert cards[0]["company_name"] == "Hammer Media"
+    assert cards[0]["location"] == "Remote in Austin, TX"
+
+
 def test_has_no_results():
     assert has_no_results(_load("no_results.txt")) is True
     assert has_no_results(_load("search_results.txt")) is False

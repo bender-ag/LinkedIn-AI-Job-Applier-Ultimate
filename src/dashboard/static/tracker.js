@@ -3,7 +3,6 @@ const STATUSES = ["new", "interested", "applied", "interviewing", "rejected", "o
 
 // DOM elements
 const statusTilesContainer = document.getElementById("status-tiles");
-const llmStatsContainer = document.getElementById("llm-stats");
 const searchInput = document.getElementById("search-input");
 const statusFilter = document.getElementById("status-filter");
 const errorMessage = document.getElementById("error-message");
@@ -89,20 +88,6 @@ async function fetchSummary() {
   } catch (error) {
     console.error("Failed to fetch summary:", error);
     showError("Failed to load summary data");
-  }
-}
-
-/**
- * Fetch cumulative LLM stats (tailoring is the only LLM cost source)
- */
-async function fetchLlmStats() {
-  try {
-    const response = await fetch("/api/tracker/llm-stats");
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    renderLlmStats(await response.json());
-  } catch (error) {
-    console.error("Failed to fetch LLM stats:", error);
-    // Non-fatal: the tracker is usable without the stats tiles.
   }
 }
 
@@ -199,8 +184,7 @@ async function tailorJob(url, btn) {
       const err = await response.json().catch(() => ({}));
       throw new Error(err.detail || `HTTP ${response.status}`);
     }
-    // Refresh cost tiles + rows, then re-open the row so links are visible.
-    await fetchLlmStats();
+    // Refresh rows (per-job cost + links), then re-open the row.
     await fetchJobs();
     reopenRow(url);
   } catch (error) {
@@ -251,9 +235,12 @@ function renderStatusTiles() {
     statusTilesContainer.appendChild(tile);
   });
 
-  // Add Total tile
+  // Add Total tile — clicking it clears the status filter (shows all)
   const totalTile = document.createElement("div");
   totalTile.className = "status-tile";
+  if (currentFilterStatus === null) {
+    totalTile.classList.add("active");
+  }
   const totalLabel = document.createElement("span");
   totalLabel.className = "status-tile-label";
   totalLabel.textContent = "Total";
@@ -262,34 +249,13 @@ function renderStatusTiles() {
   totalCount.textContent = summary.total || 0;
   totalTile.appendChild(totalLabel);
   totalTile.appendChild(totalCount);
-  statusTilesContainer.appendChild(totalTile);
-}
-
-/**
- * Render LLM stat tiles (cumulative tailoring usage)
- */
-function renderLlmStats(stats) {
-  const tiles = [
-    ["Tailor Calls", stats.calls ?? 0],
-    ["Tailor Cost", `$${(stats.total_cost ?? 0).toFixed(4)}`],
-    ["Tokens", (stats.total_tokens ?? 0).toLocaleString()],
-    ["LLM Time", `${(stats.total_time_seconds ?? 0).toFixed(1)}s`],
-  ];
-
-  llmStatsContainer.innerHTML = "";
-  tiles.forEach(([label, value]) => {
-    const tile = document.createElement("div");
-    tile.className = "stat-tile";
-    const l = document.createElement("span");
-    l.className = "stat-tile-label";
-    l.textContent = label;
-    const v = document.createElement("span");
-    v.className = "stat-tile-value";
-    v.textContent = value;
-    tile.appendChild(l);
-    tile.appendChild(v);
-    llmStatsContainer.appendChild(tile);
+  totalTile.addEventListener("click", () => {
+    currentFilterStatus = null;
+    statusFilter.value = "";
+    renderStatusTiles();
+    filterAndRenderJobs();
   });
+  statusTilesContainer.appendChild(totalTile);
 }
 
 /**
@@ -580,7 +546,6 @@ async function init() {
 
   // Load data
   await fetchSummary();
-  await fetchLlmStats();
   await fetchJobs();
 
   // Update sort indicators

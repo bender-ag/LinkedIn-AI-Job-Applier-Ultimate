@@ -274,3 +274,16 @@ def test_health_stopped_is_idle():
     h = ss.assess_sweep_health(_health_status(latest=_sweep_row(status="stopped")), now=_NOW)
     assert h["state"] == "stopped"
     assert h["level"] == "idle"
+
+
+def test_health_age_uses_naive_local_default_now():
+    # Regression: sweep timestamps are naive-local (runtime._now_iso), so the
+    # DEFAULT `now` must be naive-local too — otherwise a fresh sweep reads the
+    # UTC offset ("5h ago") instead of ~just-now. Exercises the default path (no
+    # `now` passed), unlike the tz-aware cases above.
+    finished = datetime.now().isoformat(timespec="seconds")
+    latest = {"status": "done", "collected": 7, "new_count": 2, "finished_at": finished}
+    h = ss.assess_sweep_health({"running": False, "latest": latest})
+    assert h["state"] == "ok"
+    assert h["age_hours"] is not None
+    assert h["age_hours"] < 0.1  # ~just now, not a whole-hour timezone offset

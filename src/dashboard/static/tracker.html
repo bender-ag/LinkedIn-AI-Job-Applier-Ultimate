@@ -12,6 +12,58 @@
     /* Tracker-specific styles */
     .tracker-hero {
       padding: 1rem 1.4rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+    }
+
+    .tracker-nav a {
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 600;
+    }
+
+    .tracker-nav a:hover {
+      text-decoration: underline;
+    }
+
+    /* Sweep controls */
+    .sweep-btn {
+      border-radius: 7px;
+      border: 1px solid var(--accent);
+      background: var(--accent-dim);
+      color: var(--accent);
+      padding: 0.45rem 0.9rem;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .sweep-btn:hover:not(:disabled) {
+      box-shadow: 0 0 14px var(--accent-glow);
+    }
+
+    .sweep-btn:disabled {
+      opacity: 0.6;
+      cursor: default;
+    }
+
+    .sweep-btn.stop {
+      border-color: rgba(244, 63, 94, 0.5);
+      background: var(--red-dim);
+      color: #fda4af;
+    }
+
+    .sweep-status {
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+
+    .sweep-status.running {
+      color: #38bdf8;
     }
 
     .tracker-hero h1 {
@@ -407,6 +459,9 @@
     <!-- Header -->
     <section class="panel tracker-hero">
       <h1>Job Funnel</h1>
+      <nav class="tracker-nav">
+        <a href="/history">History &rarr;</a>
+      </nav>
     </section>
 
     <!-- Status tiles -->
@@ -427,9 +482,9 @@
         <select id="status-filter" aria-label="Filter by status">
           <option value="">All statuses</option>
         </select>
-        <button id="run-sweep-btn" disabled title="Run Sweep feature coming soon">
-          Run Sweep (soon)
-        </button>
+        <button id="run-sweep-btn" class="sweep-btn">Run Sweep</button>
+        <button id="stop-sweep-btn" class="sweep-btn stop" style="display: none;">Stop Sweep</button>
+        <span id="sweep-status" class="sweep-status" role="status"></span>
       </div>
     </section>
 
@@ -459,7 +514,7 @@
 
     <!-- Footer -->
     <section class="tracker-footer">
-      <p>digest: <a href="/artifacts">/artifacts</a> · ops: <a href="/ops">/ops</a></p>
+      <p>digest: <a href="/artifacts">/artifacts</a> · history: <a href="/history">/history</a> · ops: <a href="/ops">/ops</a></p>
     </section>
   </main>
 

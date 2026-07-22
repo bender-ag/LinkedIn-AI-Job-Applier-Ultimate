@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Job Funnel — History</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+  <link rel="stylesheet" href="/static/styles.css">
+  <style>
+    .hist-hero {
+      padding: 1rem 1.4rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+    }
+
+    .hist-hero h1 {
+      margin: 0;
+      font-size: 1.6rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .hist-hero nav a {
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 600;
+    }
+
+    .hist-hero nav a:hover {
+      text-decoration: underline;
+    }
+
+    .hist-section-title {
+      margin: 0 0 0.8rem;
+      font-size: 0.95rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+    }
+
+    /* LLM stats tiles (relocated from the main tracker) */
+    .llm-stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 0.6rem;
+      margin-bottom: 0.85rem;
+    }
+
+    .stat-tile {
+      background: var(--panel-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.85rem 1rem;
+      text-align: center;
+    }
+
+    .stat-tile-label {
+      display: block;
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      margin-bottom: 0.4rem;
+    }
+
+    .stat-tile-value {
+      display: block;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 1.4rem;
+      font-weight: 500;
+      color: var(--text);
+      line-height: 1;
+    }
+
+    /* Sweeps table */
+    .hist-table-wrap {
+      overflow-x: auto;
+      border-radius: 9px;
+      border: 1px solid var(--border);
+    }
+
+    .hist-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .hist-table th {
+      padding: 0.65rem 0.8rem;
+      background: var(--th-bg);
+      border-bottom: 1px solid var(--border);
+      font-size: 0.68rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      text-align: left;
+      white-space: nowrap;
+    }
+
+    .hist-table td {
+      padding: 0.65rem 0.8rem;
+      font-size: 0.85rem;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+
+    .hist-table tbody tr:last-child td {
+      border-bottom: none;
+    }
+
+    .sweep-badge {
+      display: inline-block;
+      padding: 0.15rem 0.5rem;
+      border-radius: 6px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .sweep-badge.done {
+      background: rgba(16, 185, 129, 0.2);
+      color: #34d399;
+    }
+
+    .sweep-badge.running {
+      background: rgba(56, 189, 248, 0.2);
+      color: #38bdf8;
+    }
+
+    .sweep-badge.failed,
+    .sweep-badge.stopped {
+      background: var(--red-dim);
+      color: #fda4af;
+    }
+
+    /* Raw job inspector */
+    .hist-controls {
+      margin-bottom: 0.8rem;
+    }
+
+    .hist-controls select {
+      min-width: 260px;
+      max-width: 100%;
+    }
+
+    .hist-json {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.9rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.78rem;
+      line-height: 1.5;
+      color: var(--text);
+      max-height: 460px;
+      overflow-y: auto;
+      /* Wrap long lines (e.g. a big job_description) instead of forcing the
+         block wider than the viewport. min-width:0 lets it shrink inside the
+         grid/flex layout. */
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      min-width: 0;
+      max-width: 100%;
+      margin: 0;
+    }
+
+    .hist-empty {
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+
+    .tracker-footer {
+      text-align: center;
+      padding: 1.5rem;
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+
+    .tracker-footer a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+
+    .tracker-footer a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <main class="layout">
+    <section class="panel hist-hero">
+      <h1>History</h1>
+      <nav><a href="/">&larr; Tracker</a></nav>
+    </section>
+
+    <!-- LLM stats (tailoring cost) -->
+    <section class="llm-stats" id="llm-stats"></section>
+
+    <!-- Sweeps -->
+    <section class="panel">
+      <h2 class="hist-section-title">Sweep runs</h2>
+      <div class="hist-table-wrap">
+        <table class="hist-table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Started</th>
+              <th>Finished</th>
+              <th>Queries</th>
+              <th>Collected</th>
+              <th>New</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="sweeps-tbody">
+            <tr><td colspan="7" class="hist-empty">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Raw job inspector -->
+    <section class="panel">
+      <h2 class="hist-section-title">Raw job records</h2>
+      <div class="hist-controls">
+        <select id="job-select" aria-label="Select a job to inspect">
+          <option value="">Select a job…</option>
+        </select>
+      </div>
+      <pre id="job-json" class="hist-json hist-empty">Pick a job to view its raw record.</pre>
+    </section>
+
+    <section class="tracker-footer">
+      <p>tracker: <a href="/">/</a> · digest: <a href="/artifacts">/artifacts</a> · ops: <a href="/ops">/ops</a></p>
+    </section>
+  </main>
+
+  <script src="/static/history.js"></script>
+</body>
+</html>

@@ -587,10 +587,50 @@ def get_app_config() -> Dict[str, Any]:
     return values
 
 
+def _coerce_app_value(key: str, new: Any, original: Any) -> Any:
+    """Validate/coerce a new app-config value to the current value's type.
+
+    The dashboard writes straight into app_config.py, so a mistyped value (e.g. a
+    string where a number is expected, or a decimal for an integer knob) would
+    silently corrupt config and break the next run. Preserve the original type,
+    rejecting genuinely incompatible values. Nullable string keys (e.g.
+    RESUME_STYLE = None) accept either a string or null.
+    """
+    if isinstance(original, bool):
+        if isinstance(new, bool):
+            return new
+        raise ValueError(f"{key} must be true or false")
+    if isinstance(original, int):  # bool already handled above
+        if isinstance(new, bool):
+            raise ValueError(f"{key} must be an integer")
+        if isinstance(new, int):
+            return new
+        if isinstance(new, float) and new.is_integer():
+            return int(new)
+        raise ValueError(f"{key} must be an integer")
+    if isinstance(original, float):
+        if isinstance(new, bool) or not isinstance(new, (int, float)):
+            raise ValueError(f"{key} must be a number")
+        return float(new)
+    if original is None or isinstance(original, str):
+        if new is None or isinstance(new, str):
+            return new
+        raise ValueError(f"{key} must be text or empty")
+    if type(new) is type(original):
+        return new
+    raise ValueError(f"{key} has an unexpected value type")
+
+
 def update_app_config(changes: Dict[str, Any]) -> Dict[str, Any]:
     unsupported = sorted(set(changes) - EDITABLE_APP_CONFIG_KEYS)
     if unsupported:
         raise ValueError(f"Unsupported app config keys: {', '.join(unsupported)}")
+
+    current = get_app_config()
+    changes = {
+        key: (_coerce_app_value(key, value, current[key]) if key in current else value)
+        for key, value in changes.items()
+    }
 
     lines = APP_CONFIG_FILE.read_text(encoding="utf-8").splitlines()
     for key, value in changes.items():

@@ -117,12 +117,13 @@ function renderSearch(cfg) {
       <label class="field-label" for="s-title-blacklist">Title blacklist (one per line)</label>
       <textarea id="s-title-blacklist">${escapeHtml((cfg.title_blacklist || []).join("\n"))}</textarea>
     </div>
-    <p class="field-hint">Fields not shown here (e.g. distance, filters) are preserved on save.</p>
+    <p class="field-hint">Saving validates the search config against the schema; keys it does not recognise are dropped.</p>
   `;
 }
 
 async function saveSearch() {
-  // Clone the fetched config so any fields we don't render are preserved.
+  // Start from the fetched config so recognised fields we don't render still get
+  // sent; the server validates against the schema and drops anything unknown.
   const cfg = JSON.parse(JSON.stringify(searchConfig || {}));
   cfg.positions = linesToList("s-positions");
   cfg.locations = linesToList("s-locations");
@@ -162,14 +163,18 @@ function renderApp(app) {
       }
       let input;
       if (typeof val === "number") {
-        const t = Number.isInteger(val) ? "int" : "float";
-        input = `<input type="number" step="${t === "int" ? "1" : "any"}" data-key="${escapeHtml(
+        // step is only a spinner hint; saving uses Number() so decimals are never
+        // truncated even when a float currently holds a whole-number value.
+        const step = Number.isInteger(val) ? "1" : "any";
+        input = `<input type="number" step="${step}" data-key="${escapeHtml(
           key
-        )}" data-type="${t}" value="${escapeHtml(String(val))}">`;
+        )}" data-type="number" value="${escapeHtml(String(val))}">`;
       } else {
-        input = `<input type="text" data-key="${escapeHtml(key)}" data-type="string" value="${escapeHtml(
-          val == null ? "" : String(val)
-        )}">`;
+        // Remember when a value is currently null so an empty field round-trips
+        // back to null rather than an empty string (e.g. RESUME_STYLE = None).
+        input = `<input type="text" data-key="${escapeHtml(key)}" data-type="string" data-nullable="${
+          val == null ? "true" : "false"
+        }" value="${escapeHtml(val == null ? "" : String(val))}">`;
       }
       return `<div class="field"><label class="field-label">${escapeHtml(key)}</label>${input}</div>`;
     })
@@ -183,12 +188,12 @@ async function saveApp() {
     const type = input.dataset.type;
     if (type === "boolean") {
       changes[key] = input.checked;
-    } else if (type === "int") {
-      const n = parseInt(input.value, 10);
-      changes[key] = Number.isNaN(n) ? appConfig[key] : n;
-    } else if (type === "float") {
-      const n = parseFloat(input.value);
-      changes[key] = Number.isNaN(n) ? appConfig[key] : n;
+    } else if (type === "number") {
+      // Number() preserves ints and floats alike; keep the original if cleared.
+      const n = Number(input.value);
+      changes[key] = input.value.trim() === "" || Number.isNaN(n) ? appConfig[key] : n;
+    } else if (input.dataset.nullable === "true" && input.value.trim() === "") {
+      changes[key] = null;
     } else {
       changes[key] = input.value;
     }

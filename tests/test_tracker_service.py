@@ -527,11 +527,16 @@ def test_get_jobs_filters_before_scoring(tmp_path: Path):
     assert "https://example.com/job/2" not in all_new_urls
 
 
-def test_get_jobs_memoized_schema(tmp_path: Path):
-    """get_jobs memoizes schema migration (same db_path called twice)."""
+def test_get_jobs_memoizes_migration(tmp_path: Path, monkeypatch):
+    """Schema migration runs once per db_path across calls, and again per new path.
+
+    Spies on the ensure_schema the service actually invokes, so the test fails
+    if the memo (Fix 5) is removed — not just that two calls return equal rows.
+    """
+    import src.dashboard.tracker_service as ts
+
     yaml_path = tmp_path / "jobs.yaml"
     db_path = tmp_path / "funnel.db"
-
     _write_yaml_jobs(
         yaml_path,
         [
@@ -543,21 +548,25 @@ def test_get_jobs_memoized_schema(tmp_path: Path):
             }
         ],
     )
-
+    # merge_jobs migrates via funnel.merge.ensure_schema directly (memo untouched).
     merge_jobs(yaml_path, db_path)
 
-    # Call get_jobs twice on the same db_path
-    # The memoization should prevent redundant schema migrations
-    jobs1 = get_jobs(db_path=db_path)
-    jobs2 = get_jobs(db_path=db_path)
+    # Isolate the memo, then count migrations the service triggers.
+    ts._migrated_paths.clear()
+    calls = {"n": 0}
+    real_ensure = ts.ensure_schema
 
-    # Both should return the same results
-    assert len(jobs1) == 1
-    assert len(jobs2) == 1
-    assert jobs1[0]["url"] == jobs2[0]["url"]
+    def counting_ensure(conn):
+        calls["n"] += 1
+        return real_ensure(conn)
 
-    # Also test that distinct db_paths (e.g., in other tests) still migrate
-    # by checking that a fresh tmp db works independently
+    monkeypatch.setattr(ts, "ensure_schema", counting_ensure)
+
+    get_jobs(db_path=db_path)
+    get_jobs(db_path=db_path)
+    assert calls["n"] == 1  # migrated once despite two get_jobs calls
+
+    # A distinct db_path migrates independently (memo is per-path).
     other_db = tmp_path / "other.db"
     other_yaml = tmp_path / "other.yaml"
     _write_yaml_jobs(
@@ -572,6 +581,7 @@ def test_get_jobs_memoized_schema(tmp_path: Path):
         ],
     )
     merge_jobs(other_yaml, other_db)
-    other_jobs = get_jobs(db_path=other_db)
-    assert len(other_jobs) == 1
-    assert other_jobs[0]["url"] == "https://example.com/other/1"
+    get_jobs(db_path=other_db)
+    assert calls["n"] == 2  # second path triggers another migration
+
+    ts._migrated_paths.clear()  # don't leak these paths into other tests

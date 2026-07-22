@@ -71,6 +71,18 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         if col_name not in existing_columns:
             conn.execute(f"ALTER TABLE jobs ADD COLUMN {col_name} {col_def}")
 
+    # Sweep-run history (for the tracker's History tab).
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS sweeps (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            started_at TEXT,
+            finished_at TEXT,
+            queries_json TEXT,
+            collected INTEGER,
+            new_count INTEGER,
+            status TEXT
+        )
+        """)
     conn.commit()
 
 

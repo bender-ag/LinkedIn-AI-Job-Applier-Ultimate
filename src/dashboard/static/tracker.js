@@ -8,6 +8,9 @@ const statusFilter = document.getElementById("status-filter");
 const errorMessage = document.getElementById("error-message");
 const jobsTableBody = document.getElementById("jobs-tbody");
 const tableHeadRow = document.querySelector(".tracker-table thead tr");
+const runSweepBtn = document.getElementById("run-sweep-btn");
+const stopSweepBtn = document.getElementById("stop-sweep-btn");
+const sweepStatusEl = document.getElementById("sweep-status");
 
 let allJobs = []; // master list from the server (never mutated by filtering)
 let displayJobs = []; // filtered/sorted view actually rendered
@@ -15,6 +18,8 @@ let summary = {};
 let currentFilterStatus = null;
 let currentSortColumn = null;
 let currentSortDirection = "asc";
+let sweepPollTimer = null;
+let sweepWasRunning = false;
 
 // ──── UTILITY FUNCTIONS ────
 /**
@@ -133,6 +138,93 @@ async function updateJob(url, updates) {
   } catch (error) {
     console.error("Failed to update job:", error);
     showError(`Failed to update job: ${error.message}`);
+  }
+}
+
+// ──── SWEEP CONTROLS ────
+/**
+ * Fetch sweep process state and reflect it in the controls.
+ */
+async function fetchSweepStatus() {
+  try {
+    const response = await fetch("/api/tracker/sweep");
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    renderSweepStatus(await response.json());
+  } catch (error) {
+    console.error("Failed to fetch sweep status:", error);
+  }
+}
+
+/**
+ * Reflect sweep status in buttons + status line; refresh data when a run ends.
+ */
+function renderSweepStatus(status) {
+  const running = !!status.running;
+  runSweepBtn.style.display = running ? "none" : "";
+  stopSweepBtn.style.display = running ? "" : "none";
+  sweepStatusEl.classList.toggle("running", running);
+
+  if (running) {
+    sweepStatusEl.textContent = "Sweep running…";
+  } else if (status.latest && status.latest.status !== "running") {
+    const l = status.latest;
+    const parts = [];
+    if (l.collected != null) parts.push(`${l.collected} collected`);
+    if (l.new_count != null) parts.push(`${l.new_count} new`);
+    const detail = parts.length ? ` (${parts.join(", ")})` : "";
+    sweepStatusEl.textContent = `Last sweep: ${l.status}${detail}`;
+  } else {
+    sweepStatusEl.textContent = "";
+  }
+
+  // On a running → finished transition, refresh the jobs + status counts.
+  if (sweepWasRunning && !running) {
+    stopSweepPolling();
+    fetchSummary();
+    fetchJobs();
+  }
+  sweepWasRunning = running;
+  if (running) startSweepPolling();
+}
+
+function startSweepPolling() {
+  if (sweepPollTimer) return;
+  sweepPollTimer = setInterval(fetchSweepStatus, 3000);
+}
+
+function stopSweepPolling() {
+  if (sweepPollTimer) {
+    clearInterval(sweepPollTimer);
+    sweepPollTimer = null;
+  }
+}
+
+async function runSweep() {
+  runSweepBtn.disabled = true;
+  try {
+    const response = await fetch("/api/tracker/sweep/start", { method: "POST" });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${response.status}`);
+    }
+    renderSweepStatus(await response.json());
+    startSweepPolling();
+  } catch (error) {
+    showError(`Could not start sweep: ${error.message}`);
+  } finally {
+    runSweepBtn.disabled = false;
+  }
+}
+
+async function stopSweep() {
+  stopSweepBtn.disabled = true;
+  try {
+    await fetch("/api/tracker/sweep/stop", { method: "POST" });
+    await fetchSweepStatus();
+  } catch (error) {
+    showError(`Could not stop sweep: ${error.message}`);
+  } finally {
+    stopSweepBtn.disabled = false;
   }
 }
 
@@ -538,6 +630,10 @@ statusFilter.addEventListener("change", (e) => {
   filterAndRenderJobs();
 });
 
+// Sweep controls
+runSweepBtn.addEventListener("click", runSweep);
+stopSweepBtn.addEventListener("click", stopSweep);
+
 // ──── INITIALIZATION ────
 async function init() {
   // Set initial sort column
@@ -547,6 +643,7 @@ async function init() {
   // Load data
   await fetchSummary();
   await fetchJobs();
+  await fetchSweepStatus();
 
   // Update sort indicators
   updateSortIndicators();

@@ -485,3 +485,71 @@ def test_tracker_file_serves_markdown(monkeypatch, tmp_path):
     assert response.status_code == 200
     assert "text/plain" in response.headers["content-type"]
     assert response.content == b"# Cover Letter\n\nHello!"
+
+
+# ── Sweep routes (Phase 3) ──
+def test_tracker_sweep_status_returns_state(monkeypatch):
+    monkeypatch.setattr(
+        "src.dashboard.server.get_sweep_status",
+        lambda: {
+            "running": False,
+            "pid": None,
+            "sweep_id": None,
+            "started_at": None,
+            "latest": None,
+        },
+    )
+    response = client.get("/api/tracker/sweep")
+    assert response.status_code == 200
+    assert response.json()["running"] is False
+
+
+def test_tracker_sweeps_history(monkeypatch):
+    monkeypatch.setattr(
+        "src.dashboard.server.get_sweeps",
+        lambda limit=50: [{"id": 1, "status": "done", "collected": 9, "new_count": 4}],
+    )
+    response = client.get("/api/tracker/sweeps")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["sweeps"][0]["id"] == 1
+
+
+def test_tracker_sweep_start_success(monkeypatch):
+    monkeypatch.setattr(
+        "src.dashboard.server.start_sweep",
+        lambda: {"running": True, "pid": 123, "sweep_id": 7, "started_at": "t", "latest": None},
+    )
+    response = client.post("/api/tracker/sweep/start")
+    assert response.status_code == 200
+    assert response.json()["running"] is True
+
+
+def test_tracker_sweep_start_returns_409_when_running(monkeypatch):
+    from src.dashboard.sweep_service import SweepAlreadyRunning
+
+    def _boom():
+        raise SweepAlreadyRunning("A sweep is already running.")
+
+    monkeypatch.setattr("src.dashboard.server.start_sweep", _boom)
+    response = client.post("/api/tracker/sweep/start")
+    assert response.status_code == 409
+
+
+def test_tracker_sweep_start_returns_503_when_bridge_unavailable(monkeypatch):
+    from src.dashboard.sweep_service import BridgeUnavailable
+
+    def _boom():
+        raise BridgeUnavailable("Browser bridge is unavailable or busy.")
+
+    monkeypatch.setattr("src.dashboard.server.start_sweep", _boom)
+    response = client.post("/api/tracker/sweep/start")
+    assert response.status_code == 503
+    assert "bridge" in response.json()["detail"].lower()
+
+
+def test_tracker_sweep_stop(monkeypatch):
+    monkeypatch.setattr("src.dashboard.server.stop_sweep", lambda: True)
+    response = client.post("/api/tracker/sweep/stop")
+    assert response.status_code == 200
+    assert response.json() == {"stopped": True}

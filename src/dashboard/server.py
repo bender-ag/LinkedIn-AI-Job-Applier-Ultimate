@@ -42,6 +42,14 @@ from src.dashboard.runtime import (
     sync_process_state,
     terminate_running_process,
 )
+from src.dashboard.sweep_service import (
+    BridgeUnavailable,
+    SweepAlreadyRunning,
+    get_sweep_status,
+    get_sweeps,
+    start_sweep,
+    stop_sweep,
+)
 from src.dashboard.tailor_service import TAILORED_DIR, JobNotFound, tailor_job
 from src.dashboard.tracker_service import get_jobs as get_tracker_jobs
 from src.dashboard.tracker_service import (
@@ -93,6 +101,11 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 @app.get("/")
 async def tracker_index() -> FileResponse:
     return FileResponse(STATIC_DIR / "tracker.html")
+
+
+@app.get("/history")
+async def tracker_history_page() -> FileResponse:
+    return FileResponse(STATIC_DIR / "history.html")
 
 
 @app.get("/ops", response_class=HTMLResponse)
@@ -350,3 +363,33 @@ def tracker_file(path: str = Query(...)) -> Response:
         media_type=media_type,
         headers={"Content-Disposition": f'inline; filename="{file_path.name}"'},
     )
+
+
+@app.get("/api/tracker/sweep")
+def tracker_sweep_status() -> JSONResponse:
+    """Current sweep process state + latest sweep row."""
+    return JSONResponse(get_sweep_status())
+
+
+@app.get("/api/tracker/sweeps")
+def tracker_sweeps(limit: int = Query(default=50, ge=1, le=500)) -> JSONResponse:
+    """Sweep-run history (newest first) for the History tab."""
+    return JSONResponse({"sweeps": get_sweeps(limit=limit)})
+
+
+@app.post("/api/tracker/sweep/start")
+def tracker_sweep_start() -> JSONResponse:
+    """Launch a guarded full sweep (collect → merge → digest)."""
+    try:
+        return JSONResponse(start_sweep())
+    except SweepAlreadyRunning as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except BridgeUnavailable as exc:
+        # 503: the sweep's browser-bridge dependency isn't available.
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.post("/api/tracker/sweep/stop")
+def tracker_sweep_stop() -> JSONResponse:
+    """Signal a running sweep to stop."""
+    return JSONResponse({"stopped": stop_sweep()})

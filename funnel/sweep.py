@@ -1,7 +1,7 @@
 """One-command sweep: collect Indeed jobs -> merge into SQLite -> write digest.
 
-Runs the full funnel pipeline in sequence. Requires the browser bridge up and
-NO other MCP client (e.g. the Claude Code `browser` server) holding it.
+Runs the full funnel pipeline in sequence. Requires the browser bridge up; it is
+multi-session, so a live Claude Code `browser` session does not block it.
 
     uv run python -m funnel.sweep                 # HTML digest to /artifacts
     uv run python -m funnel.sweep --format md --max 10

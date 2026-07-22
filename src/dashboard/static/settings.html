@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Job Funnel — Settings</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+  <link rel="stylesheet" href="/static/styles.css">
+  <style>
+    .settings-hero {
+      padding: 1rem 1.4rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+    }
+
+    .settings-hero h1 {
+      margin: 0;
+      font-size: 1.6rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .settings-hero nav a {
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 600;
+    }
+
+    .settings-hero nav a:hover {
+      text-decoration: underline;
+    }
+
+    .settings-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-bottom: 0.4rem;
+    }
+
+    .settings-section-title {
+      margin: 0;
+      font-size: 0.95rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+    }
+
+    .save-btn {
+      border-radius: 7px;
+      border: 1px solid var(--accent);
+      background: var(--accent-dim);
+      color: var(--accent);
+      padding: 0.45rem 0.9rem;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .save-btn:hover:not(:disabled) {
+      box-shadow: 0 0 14px var(--accent-glow);
+    }
+
+    .save-btn:disabled {
+      opacity: 0.6;
+      cursor: default;
+    }
+
+    .settings-status {
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+
+    .settings-status.ok {
+      color: #34d399;
+    }
+
+    .settings-status.err {
+      color: #fda4af;
+    }
+
+    .settings-body {
+      margin-top: 0.9rem;
+      display: grid;
+      gap: 1.1rem;
+    }
+
+    .field {
+      display: grid;
+      gap: 0.35rem;
+    }
+
+    .field-label {
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+    }
+
+    .field input[type="text"],
+    .field input[type="number"],
+    .field textarea,
+    .field select {
+      border-radius: 7px;
+      border: 1px solid var(--border);
+      background: rgba(0, 0, 0, 0.3);
+      color: var(--text);
+      padding: 0.5rem 0.7rem;
+      font-size: 0.85rem;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.15s;
+      width: 100%;
+      box-sizing: border-box;
+    }
+
+    .field textarea {
+      min-height: 70px;
+      resize: vertical;
+    }
+
+    .field input:focus,
+    .field textarea:focus,
+    .field select:focus {
+      border-color: rgba(56, 189, 248, 0.5);
+    }
+
+    .check-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.7rem 1.1rem;
+    }
+
+    .check-item {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.85rem;
+      color: var(--text);
+    }
+
+    .field-hint {
+      font-size: 0.72rem;
+      color: var(--muted);
+    }
+
+    .settings-error {
+      background: var(--red-dim);
+      border: 1px solid rgba(244, 63, 94, 0.3);
+      border-radius: 8px;
+      padding: 0.9rem;
+      color: #fda4af;
+      margin-bottom: 1rem;
+    }
+
+    .tracker-footer {
+      text-align: center;
+      padding: 1.5rem;
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+
+    .tracker-footer a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+
+    .tracker-footer a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <main class="layout">
+    <section class="panel settings-hero">
+      <h1>Settings</h1>
+      <nav><a href="/">&larr; Tracker</a></nav>
+    </section>
+
+    <div id="error-message" class="settings-error" style="display: none;"></div>
+
+    <!-- Search config -->
+    <section class="panel">
+      <div class="settings-head">
+        <h2 class="settings-section-title">Search</h2>
+        <div>
+          <span id="search-status" class="settings-status"></span>
+          <button id="save-search" class="save-btn">Save search</button>
+        </div>
+      </div>
+      <div id="search-form" class="settings-body">Loading…</div>
+    </section>
+
+    <!-- App config -->
+    <section class="panel">
+      <div class="settings-head">
+        <h2 class="settings-section-title">Application</h2>
+        <div>
+          <span id="app-status" class="settings-status"></span>
+          <button id="save-app" class="save-btn">Save application</button>
+        </div>
+      </div>
+      <div id="app-form" class="settings-body">Loading…</div>
+    </section>
+
+    <section class="tracker-footer">
+      <p>tracker: <a href="/">/</a> · history: <a href="/history">/history</a> · digest: <a href="/artifacts">/artifacts</a> · ops: <a href="/ops">/ops</a></p>
+    </section>
+  </main>
+
+  <script src="/static/settings.js"></script>
+</body>
+</html>

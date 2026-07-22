@@ -553,3 +553,16 @@ def test_tracker_sweep_stop(monkeypatch):
     response = client.post("/api/tracker/sweep/stop")
     assert response.status_code == 200
     assert response.json() == {"stopped": True}
+
+
+# ── Phase 4 page routes ──
+def test_history_page_served():
+    response = client.get("/history")
+    assert response.status_code == 200
+    assert "History" in response.text
+
+
+def test_settings_page_served():
+    response = client.get("/settings")
+    assert response.status_code == 200
+    assert "Settings" in response.text

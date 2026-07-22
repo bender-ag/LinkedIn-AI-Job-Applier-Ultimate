@@ -55,7 +55,9 @@ from src.resume_builder.resume_manager import ResumeManager
 from src.resume_builder.style_manager import StyleManager
 from src.utils.browser_utils import create_playwright_browser, save_browser_session, stop_tracing
 from src.utils.runtime_control import (
+    BrowserClosedError,
     ShutdownState,
+    attach_browser_close_watchers,
     register_shutdown_handlers,
     runtime_controller,
     sleep_with_shutdown,
@@ -264,8 +266,9 @@ async def create_and_run_bot(
 ):
     """Start LinkedIn bot (async)"""
     logger.info("Initializing LinkedIn bot...")
-    # Fresh shutdown state per run (matters when RESTART_EVERY_DAY loops runs)
-    runtime_controller.set_shutdown_state(ShutdownState.RUNNING)
+    # Fresh per-run state (matters when RESTART_EVERY_DAY loops runs and when
+    # restarting after a browser disconnect).
+    runtime_controller.reset_for_new_run()
     emit_event(
         "run_started",
         "LinkedIn bot run started",
@@ -276,7 +279,8 @@ async def create_and_run_bot(
     # Initialize browser Playwright based on configuration
     try:
         browser, context, page = await create_playwright_browser()
-        # Local runtime patch: detect manual browser closure and recover cleanly.
+        # Detect an unexpected browser disconnect so the run can restart cleanly.
+        attach_browser_close_watchers(browser)
         logger.info("Playwright browser initialized successfully")
         emit_event("browser_initialized", "Playwright browser initialized")
 
@@ -383,6 +387,10 @@ async def create_and_run_bot(
         if not resume_ready_made:
             bot.set_resume_generator(resume_generator_manager)
         await bot.start_apply()
+        # If the browser dropped mid-run (and we are not already shutting down),
+        # surface it so the main loop can restart with a fresh browser.
+        if runtime_controller.is_browser_lost() and not runtime_controller.is_shutdown_requested():
+            raise BrowserClosedError("Browser disconnected during the run")
         emit_event("run_completed", "LinkedIn bot run completed successfully")
 
     finally:
@@ -417,8 +425,14 @@ def main() -> None:
     if not os.environ.get("DASHBOARD_RUN_ID"):
         update_control_state(stop_requested=False, pause_requested=False)
 
+    # Restart a limited number of times if the browser disconnects mid-run.
+    max_browser_restart_attempts = 3
+    browser_restart_backoff_sec = 5
+    browser_restart_attempts = 0
+
     while True:
         should_exit = False
+        should_restart = False
         try:
             # create output folder if it doesn't exist
             data = Path("data")
@@ -448,20 +462,37 @@ def main() -> None:
 
             asyncio.run(create_and_run_bot(search_config, secrets, resume_text, resume_structured))
             logger.info(f"{JOB_SITE.capitalize()} bot completed successfully")
+            # A clean run clears any accumulated browser-disconnect streak.
+            browser_restart_attempts = 0
 
         except StopRequested as stop_requested:
             logger.warning(str(stop_requested))
             emit_event("run_stopped", "Run stopped gracefully by dashboard")
             should_exit = True
 
-        except StopRequested as stop_requested:
-            logger.warning(str(stop_requested))
-            emit_event("run_stopped", "Run stopped gracefully by dashboard")
-            should_exit = True
+        except BrowserClosedError as bce:
+            if runtime_controller.is_shutdown_requested():
+                logger.info("Browser closed during shutdown; exiting.")
+                should_exit = True
+            elif browser_restart_attempts < max_browser_restart_attempts:
+                browser_restart_attempts += 1
+                logger.warning(
+                    f"{bce} — restarting run "
+                    f"({browser_restart_attempts}/{max_browser_restart_attempts})."
+                )
+                emit_event(
+                    "run_restarting",
+                    "Restarting after browser disconnect",
+                    attempt=browser_restart_attempts,
+                )
+                should_restart = True
+            else:
+                logger.error(f"Browser disconnected {browser_restart_attempts} times; giving up.")
+                emit_event("run_failed", "Browser repeatedly disconnected")
+                should_exit = True
 
-        except StopRequested as stop_requested:
-            logger.warning(str(stop_requested))
-            emit_event("run_stopped", "Run stopped gracefully by dashboard")
+        except KeyboardInterrupt:
+            logger.info("Interrupted by user — exiting after cleanup.")
             should_exit = True
 
         except ConfigError as ce:
@@ -481,14 +512,19 @@ def main() -> None:
             emit_event("run_failed", "Unhandled exception", error=str(e))
         finally:
             logger.info("Program completed")
-            # Wait 1 hour total before next run
-            if RESTART_EVERY_DAY and not should_exit:
+            if should_restart:
+                logger.info("Restarting shortly (press Ctrl+C to stop)")
+                # Brief interruptible backoff before reopening the browser.
+                if not asyncio.run(sleep_with_shutdown(browser_restart_backoff_sec)):
+                    logger.info("Shutdown requested during restart backoff")
+                    should_exit = True
+            elif RESTART_EVERY_DAY and not should_exit:
                 logger.info("Waiting 1 hour before next run")
-                # Local runtime patch: make the daily wait interruptible.
+                # Make the daily wait interruptible.
                 if not asyncio.run(sleep_with_shutdown(3600)):
                     logger.info("Shutdown requested during wait interval")
                     should_exit = True
-            else:
+            elif not should_exit:
                 logger.info("Exiting program")
                 should_exit = True
 

@@ -2,7 +2,6 @@ import asyncio
 import ctypes
 import os
 import signal
-import time
 from enum import Enum
 from threading import Event
 from typing import Any
@@ -11,6 +10,10 @@ from config.logger_config import logger
 
 _shutdown_handlers_registered = False
 _windows_console_handler = None
+
+# Windows delivers CTRL_CLOSE_EVENT with only a few seconds before it force-kills
+# the process, so the console handler must not block cleanup for longer than that.
+_WINDOWS_CLEANUP_TIMEOUT_SEC = 4.0
 
 
 class ShutdownState(Enum):
@@ -23,25 +26,41 @@ class ShutdownState(Enum):
 
 
 class BrowserClosedError(RuntimeError):
-    """Raised when the browser window is closed during a run."""
-
-
-class GracefulShutdownRequested(RuntimeError):
-    """Raised when the application should stop after cleanup."""
+    """Raised when the browser is closed/disconnected mid-run so the run can restart."""
 
 
 class RuntimeController:
-    """Coordinates shutdown and browser-close reactions across sync/async boundaries."""
+    """Coordinates shutdown and browser-loss reactions across sync/async boundaries."""
 
     def __init__(self) -> None:
         self.shutdown_requested = Event()
         self.cleanup_complete = Event()
         self.cleanup_complete.set()
         self.shutdown_state = ShutdownState.RUNNING
+        self._browser_lost = Event()
+
+    # ------------------------------------------------------------------ run lifecycle
+    def reset_for_new_run(self) -> None:
+        """Reset per-run state at the start of each run.
+
+        Matters when RESTART_EVERY_DAY loops runs, and when restarting after a
+        browser disconnect: the browser-lost flag from the previous attempt must
+        not leak into the fresh one.
+        """
+        self.shutdown_state = ShutdownState.RUNNING
+        self._browser_lost.clear()
+        self.cleanup_complete.clear()
 
     def set_shutdown_state(self, state: ShutdownState) -> None:
         self.shutdown_state = state
 
+    def finish_run(self) -> None:
+        self.cleanup_complete.set()
+
+    def wait_for_cleanup(self, timeout: float = _WINDOWS_CLEANUP_TIMEOUT_SEC) -> bool:
+        return self.cleanup_complete.wait(timeout)
+
+    # ------------------------------------------------------------------ shutdown
     def request_shutdown(self, source: str) -> None:
         if self.shutdown_state == ShutdownState.RUNNING:
             self.set_shutdown_state(ShutdownState.DRAINING)
@@ -53,25 +72,58 @@ class RuntimeController:
     def is_shutdown_requested(self) -> bool:
         return self.shutdown_requested.is_set()
 
-    def begin_run(self) -> None:
-        self.cleanup_complete.clear()
+    def should_drain(self) -> bool:
+        """True once a graceful shutdown has begun (stop before starting new jobs)."""
+        return self.shutdown_state == ShutdownState.DRAINING
 
-    def finish_run(self) -> None:
-        self.cleanup_complete.set()
+    # ------------------------------------------------------------------ browser loss
+    def mark_browser_lost(self) -> None:
+        self._browser_lost.set()
 
-    def wait_for_cleanup(self, timeout: float = 15.0) -> bool:
-        return self.cleanup_complete.wait(timeout)
+    def is_browser_lost(self) -> bool:
+        return self._browser_lost.is_set()
+
+    # ------------------------------------------------------------------ job-loop checkpoint
+    def next_job_stop_reason(self) -> str | None:
+        """Reason to stop before starting the next job, or None to keep going.
+
+        Factored out of the platform job managers so every manager honours
+        shutdown and browser loss identically. Returns the loop's result code:
+          - "Error"    the browser was lost; stop so the run can restart cleanly
+          - "Shutdown" a graceful shutdown drain has begun; stop before new work
+        """
+        if self.is_browser_lost():
+            logger.warning("Browser disconnected; stopping run")
+            return "Error"
+        if self.should_drain():
+            logger.info("Shutdown requested — stopping before the next job")
+            return "Shutdown"
+        return None
 
 
 runtime_controller = RuntimeController()
 
 
 def _handle_shutdown_signal(signum, _frame) -> None:
-    """Convert OS signals into a graceful shutdown request."""
+    """Convert OS signals into a graceful shutdown request.
+
+    The first signal starts a graceful drain (the current job finishes, then the
+    program exits). A second signal escalates to an immediate abort by restoring
+    the default handler and raising KeyboardInterrupt, so the user is never stuck
+    — e.g. blocked at an ``input()`` prompt where there is no running job to
+    drain.
+    """
     try:
         signal_name = signal.Signals(signum).name
     except ValueError:
         signal_name = str(signum)
+
+    if runtime_controller.is_shutdown_requested():
+        logger.warning(f"Second interrupt ({signal_name}) received — aborting now.")
+        # Restore default handling so a further signal hard-kills, and raise so
+        # blocking calls (input(), time.sleep) unwind immediately.
+        signal.signal(signum, signal.SIG_DFL)
+        raise KeyboardInterrupt
     runtime_controller.request_shutdown(f"signal {signal_name}")
 
 
@@ -99,7 +151,7 @@ def register_shutdown_handlers() -> None:
             runtime_controller.request_shutdown(
                 f"console event {event_names.get(ctrl_type, ctrl_type)}"
             )
-            runtime_controller.wait_for_cleanup(timeout=15.0)
+            runtime_controller.wait_for_cleanup()
             return True
 
         _windows_console_handler = handler_type(console_handler)
@@ -108,86 +160,34 @@ def register_shutdown_handlers() -> None:
     _shutdown_handlers_registered = True
 
 
-def attach_browser_close_watchers(browser: Any, context: Any, page: Any) -> asyncio.Event:
-    """Return an event that fires when the browser/page/context is closed."""
-    browser_closed = asyncio.Event()
+def attach_browser_close_watchers(browser: Any) -> None:
+    """Flag the run as browser-lost if the browser disconnects unexpectedly.
 
-    def mark_closed(target_name: str) -> None:
-        if not browser_closed.is_set():
-            logger.warning(
-                f"{target_name} was closed. Press Ctrl+C to stop, or the bot will reopen the browser shortly."
-            )
-            browser_closed.set()
+    Only reacts while the run is still meant to be active (RUNNING/DRAINING); the
+    intentional ``browser.close()`` during cleanup also fires "disconnected", and
+    must not be mistaken for a crash.
+    """
 
-    browser.on("disconnected", lambda: mark_closed("Browser"))
-    context.on("close", lambda: mark_closed("Browser context"))
-    page.on("close", lambda: mark_closed("Browser page"))
-    return browser_closed
+    def on_disconnected() -> None:
+        if runtime_controller.shutdown_state in (ShutdownState.RUNNING, ShutdownState.DRAINING):
+            logger.warning("Browser disconnected unexpectedly; will stop and restart the run.")
+            runtime_controller.mark_browser_lost()
 
-
-async def _wait_for_shutdown_request() -> str:
-    await asyncio.to_thread(runtime_controller.shutdown_requested.wait)
-    return "shutdown"
+    browser.on("disconnected", lambda: on_disconnected())
 
 
-async def _wait_for_browser_close(browser_closed: asyncio.Event) -> str:
-    await browser_closed.wait()
-    return "browser_closed"
+async def sleep_with_shutdown(seconds: float) -> bool:
+    """Sleep up to ``seconds``, waking early if a shutdown is requested.
 
-
-async def _cancel_task(task: asyncio.Task | None) -> None:
-    if task is None or task.done():
-        return
-    task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        pass
-
-
-async def run_with_runtime_guards(bot: Any, browser_closed: asyncio.Event):
-    """Race the bot against runtime control events."""
-    apply_task = asyncio.create_task(bot.start_apply())
-    browser_task = asyncio.create_task(_wait_for_browser_close(browser_closed))
-    shutdown_task = asyncio.create_task(_wait_for_shutdown_request())
-
-    try:
-        done, _pending = await asyncio.wait(
-            {apply_task, browser_task, shutdown_task},
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-
-        if apply_task in done:
-            return await apply_task
-
-        if browser_task in done:
-            await _cancel_task(apply_task)
-            raise BrowserClosedError("Browser window closed by user")
-
-        if shutdown_task in done:
-            await _cancel_task(apply_task)
-            raise GracefulShutdownRequested("Shutdown requested")
-    finally:
-        await _cancel_task(browser_task)
-        await _cancel_task(shutdown_task)
-
-
-async def sleep_with_shutdown(seconds: int) -> bool:
-    """Sleep in short chunks so shutdown requests are honored quickly."""
-    for _ in range(seconds):
-        if runtime_controller.is_shutdown_requested():
-            return False
-        await asyncio.sleep(1)
-    return not runtime_controller.is_shutdown_requested()
-
-
-def countdown_before_restart(seconds: int = 5) -> bool:
-    """Give the user a short window to cancel restart after browser closure."""
-    logger.warning("I can reopen the browser and continue. Press Ctrl+C now to stop applications.")
-    for remaining in range(seconds, 0, -1):
-        if runtime_controller.is_shutdown_requested():
-            logger.info("Restart cancelled by shutdown request")
-            return False
-        logger.warning(f"Reopening browser in {remaining}...")
-        time.sleep(1)
-    return not runtime_controller.is_shutdown_requested()
+    Returns True if the full interval elapsed, False if a shutdown request cut it
+    short. Uses a monotonic deadline so the total wait does not drift, while
+    staying responsive (<=1s) to shutdown requests.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + seconds
+    while not runtime_controller.is_shutdown_requested():
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            return True
+        await asyncio.sleep(min(1.0, remaining))
+    return False

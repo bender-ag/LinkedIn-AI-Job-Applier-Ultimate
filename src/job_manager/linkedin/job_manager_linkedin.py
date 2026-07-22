@@ -20,7 +20,7 @@ from config.constants import COVER_LETTER_DIR, OUTPUT_DIR_LINKEDIN, RESUME_DIR, 
 from config.logger_config import logger
 from src.dashboard.runtime import StopRequested, emit_event
 from src.job_manager.job_manager import BaseJobManager
-from src.utils.runtime_control import ShutdownState, runtime_controller
+from src.utils.runtime_control import runtime_controller
 
 try:
     from config.app_config import IS_PREMIUM
@@ -235,10 +235,11 @@ class LinkedInJobManager(BaseJobManager):
                 if self.pause_checker:
                     await self.pause_checker()
 
-                # Stop starting new jobs once a shutdown has been requested
-                if runtime_controller.shutdown_state == ShutdownState.DRAINING:
-                    logger.info("Shutdown requested — stopping before the next job")
-                    result = "Shutdown"
+                # Cooperative checkpoint: stop before the next job on a graceful
+                # shutdown or an unexpected browser disconnect.
+                stop_reason = runtime_controller.next_job_stop_reason()
+                if stop_reason:
+                    result = stop_reason
                     break
 
                 url = vacancy.get("url")

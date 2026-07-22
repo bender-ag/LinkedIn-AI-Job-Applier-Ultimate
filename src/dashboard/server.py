@@ -42,7 +42,7 @@ from src.dashboard.runtime import (
     sync_process_state,
     terminate_running_process,
 )
-from src.dashboard.tailor_service import TAILORED_DIR, tailor_job
+from src.dashboard.tailor_service import TAILORED_DIR, JobNotFound, tailor_job
 from src.dashboard.tracker_service import get_jobs as get_tracker_jobs
 from src.dashboard.tracker_service import (
     status_counts,
@@ -326,7 +326,7 @@ async def tailor_tracker_job(payload: TailorPayload) -> JSONResponse:
     try:
         updated = await tailor_job(payload.url)
         return JSONResponse(updated)
-    except KeyError as exc:
+    except JobNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except (FileNotFoundError, RuntimeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

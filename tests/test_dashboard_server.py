@@ -381,11 +381,15 @@ def test_tracker_tailor_job_success(monkeypatch):
     )
 
 
-def test_tracker_tailor_job_returns_404_on_keyerror(monkeypatch):
-    """POST /api/tracker/jobs/tailor returns 404 when tailor_job raises KeyError."""
+def test_tracker_tailor_job_returns_404_on_job_not_found(monkeypatch):
+    """POST /api/tracker/jobs/tailor returns 404 when tailor_job raises JobNotFound."""
     from unittest.mock import AsyncMock
 
-    async_mock = AsyncMock(side_effect=KeyError("Job not found: https://example.com/job/unknown"))
+    from src.dashboard.tailor_service import JobNotFound
+
+    async_mock = AsyncMock(
+        side_effect=JobNotFound("Job not found: https://example.com/job/unknown")
+    )
     monkeypatch.setattr("src.dashboard.server.tailor_job", async_mock)
 
     response = client.post(

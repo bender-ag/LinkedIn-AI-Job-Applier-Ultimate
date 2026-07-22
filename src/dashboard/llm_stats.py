@@ -19,15 +19,46 @@ from src.dashboard.runtime import ROOT_DIR
 
 LLM_CALLS_FILE = ROOT_DIR / LOG_DIR / "llm_api_calls.yaml"
 
+# Cache of parsed call docs keyed by path, invalidated on (mtime, size) change.
+# get_jobs reads this log on every request, so re-parsing an unchanged (and
+# potentially large) file each time is pure waste.
+_docs_cache: dict[str, tuple[tuple[float, int], list[dict]]] = {}
 
-def _iter_call_docs(calls_log: Path):
-    """Yield each dict document from the multi-document YAML call log."""
+
+def _read_call_docs(calls_log: Path) -> list[dict]:
+    """
+    Return every dict document from the multi-document YAML call log.
+
+    Memoized by (mtime, size). Resilient to a malformed or partially-written
+    log: whatever parsed cleanly before an error is returned rather than raising
+    — this log is on the get_jobs hot path and must never 500 the jobs list.
+    """
     if not calls_log.exists():
-        return
-    with calls_log.open(encoding="utf-8") as f:
-        for doc in yaml.safe_load_all(f):
-            if isinstance(doc, dict):
-                yield doc
+        return []
+    try:
+        stat = calls_log.stat()
+    except OSError:
+        return []
+
+    key = str(calls_log)
+    sig = (stat.st_mtime, stat.st_size)
+    cached = _docs_cache.get(key)
+    if cached is not None and cached[0] == sig:
+        return cached[1]
+
+    docs: list[dict] = []
+    try:
+        with calls_log.open(encoding="utf-8") as f:
+            for doc in yaml.safe_load_all(f):
+                if isinstance(doc, dict):
+                    docs.append(doc)
+    except yaml.YAMLError:
+        # Corrupt / mid-append log: return the clean prefix, don't cache it
+        # (the file is still changing), and never propagate.
+        return docs
+
+    _docs_cache[key] = (sig, docs)
+    return docs
 
 
 def llm_totals(calls_log: Path | None = None) -> dict[str, Any]:
@@ -42,7 +73,7 @@ def llm_totals(calls_log: Path | None = None) -> dict[str, Any]:
         calls_log = LLM_CALLS_FILE
 
     calls, total_tokens, total_cost, total_time = 0, 0, 0.0, 0.0
-    for doc in _iter_call_docs(calls_log):
+    for doc in _read_call_docs(calls_log):
         calls += 1
         total_tokens += doc.get("total_tokens") or 0
         total_cost += doc.get("total_cost") or 0.0
@@ -68,7 +99,7 @@ def job_cost_map(calls_log: Path | None = None) -> dict[str, dict[str, Any]]:
         calls_log = LLM_CALLS_FILE
 
     by_job: dict[str, dict[str, Any]] = {}
-    for doc in _iter_call_docs(calls_log):
+    for doc in _read_call_docs(calls_log):
         job_url = doc.get("job_url") or ""
         if not job_url:
             continue

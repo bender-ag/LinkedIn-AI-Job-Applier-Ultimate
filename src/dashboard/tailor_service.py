@@ -22,18 +22,27 @@ is a session/pre-run step, not this handler's responsibility.
 
 from __future__ import annotations
 
+import asyncio
 import base64
+import functools
 import hashlib
 import re
 import sqlite3
 from pathlib import Path
 from typing import Any
 
+import anyio.to_thread
+
 from config.constants import RESUME_DIR
+from config.logger_config import logger
 from src.dashboard.runtime import ROOT_DIR
 from src.dashboard.tracker_service import DB_PATH, _ensure_schema_once, _now_iso
 
 TAILORED_DIR = ROOT_DIR / "data" / "output" / "tailored"
+
+
+class JobNotFound(Exception):
+    """Raised when a tailor request targets a URL not present in the funnel DB."""
 
 
 def _slug(job: dict[str, Any]) -> str:
@@ -97,15 +106,16 @@ def _rel_to_root(path: Path) -> str:
     return str(path.resolve().relative_to(ROOT_DIR.resolve()))
 
 
-async def tailor_job(url: str, db_path: Path | None = None) -> dict[str, Any]:
+def _tailor_job_sync(url: str, db_path: Path | None = None) -> dict[str, Any]:
     """
-    Generate a tailored résumé PDF + cover letter for one job and persist paths.
+    Synchronous tailoring implementation (blocking LLM + PDF work).
 
-    Returns the updated job row (dict) including ``tailored_resume_path`` and
-    ``tailored_cover_path`` (both ROOT-relative).
+    Run off the event loop via :func:`tailor_job`. Returns the updated job row
+    (dict) including ROOT-relative ``tailored_resume_path`` /
+    ``tailored_cover_path``.
 
     Raises:
-        KeyError: the URL is not in the DB.
+        JobNotFound: the URL is not in the DB.
         FileNotFoundError: the résumé source text is missing.
         RuntimeError: no LLM API key is configured.
     """
@@ -125,7 +135,7 @@ async def tailor_job(url: str, db_path: Path | None = None) -> dict[str, Any]:
 
     job = _fetch_job_row(url, db_path)
     if job is None:
-        raise KeyError(f"Job not found: {url}")
+        raise JobNotFound(f"Job not found: {url}")
 
     # ── Secrets ──
     secrets = dotenv.dotenv_values(ROOT_DIR / ".env")
@@ -172,7 +182,17 @@ async def tailor_job(url: str, db_path: Path | None = None) -> dict[str, Any]:
     resume_manager.choose_style()
     if getattr(resume_manager, "selected_style", None) is None:
         resume_manager.choose_default_style()
-    pdf_base64 = await resume_manager.pdf_base64()
+    # Guard a mistyped RESUME_STYLE: an unknown style would otherwise KeyError
+    # deep in PDF generation (get_style_path). Fall back to the default.
+    if resume_manager.selected_style not in resume_manager.style_manager.get_styles():
+        logger.warning(
+            "Configured resume style %r is not available; using default style.",
+            resume_manager.selected_style,
+        )
+        resume_manager.choose_default_style()
+    # pdf_base64() is async and self-contained (HTML_to_PDF starts/stops its own
+    # Playwright), so a fresh loop in this worker thread is safe.
+    pdf_base64 = asyncio.run(resume_manager.pdf_base64())
     resume_path = out_dir / "resume.pdf"
     resume_path.write_bytes(base64.b64decode(pdf_base64))
 
@@ -188,3 +208,17 @@ async def tailor_job(url: str, db_path: Path | None = None) -> dict[str, Any]:
         _rel_to_root(cover_path),
         db_path=db_path,
     )
+
+
+async def tailor_job(url: str, db_path: Path | None = None) -> dict[str, Any]:
+    """
+    Generate a tailored résumé PDF + cover letter for one job and persist paths.
+
+    Offloads the blocking LLM + PDF work to a worker thread so the dashboard's
+    event loop stays responsive during the (30–90s) tailor. Returns the updated
+    job row (dict) with ROOT-relative ``tailored_resume_path`` /
+    ``tailored_cover_path``.
+
+    Raises JobNotFound / FileNotFoundError / RuntimeError (see _tailor_job_sync).
+    """
+    return await anyio.to_thread.run_sync(functools.partial(_tailor_job_sync, url, db_path))

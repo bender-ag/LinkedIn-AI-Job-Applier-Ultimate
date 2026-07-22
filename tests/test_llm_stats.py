@@ -254,3 +254,70 @@ def test_job_cost_map_rounds_cost_to_6_decimals(tmp_path: Path):
 
     cost = result["https://example.com/job/1"]["cost"]
     assert cost == round(0.003469134, 6)
+
+
+def test_read_call_docs_tolerates_malformed_log(tmp_path: Path):
+    """A corrupt/partially-written log must not raise — it must not 500 get_jobs."""
+    log_path = tmp_path / "calls.yaml"
+    # Invalid YAML (unclosed flow sequence) — safe_load_all raises when iterated.
+    log_path.write_text("---\njob_url: x\ntotal_cost: [unclosed\n", encoding="utf-8")
+
+    # Neither reader raises; both degrade to empty aggregates.
+    assert llm_totals(log_path) == {
+        "calls": 0,
+        "total_tokens": 0,
+        "total_cost": 0.0,
+        "total_time_seconds": 0.0,
+    }
+    assert job_cost_map(log_path) == {}
+
+
+def test_read_call_docs_returns_clean_prefix_before_corruption(tmp_path: Path):
+    """A valid doc followed by garbage yields the valid prefix, not an error."""
+    log_path = tmp_path / "calls.yaml"
+    log_path.write_text(
+        "---\njob_url: https://example.com/job/1\ntotal_cost: 0.01\ntotal_tokens: 100\n"
+        "---\nbad: [unterminated\n",
+        encoding="utf-8",
+    )
+
+    result = job_cost_map(log_path)
+    assert result["https://example.com/job/1"]["cost"] == 0.01
+    assert result["https://example.com/job/1"]["calls"] == 1
+
+
+def test_call_log_parse_is_memoized_until_file_changes(tmp_path: Path, monkeypatch):
+    """The log is parsed once and cached; re-parsed only when the file changes."""
+    import src.dashboard.llm_stats as ls
+
+    ls._docs_cache.clear()
+    log_path = tmp_path / "calls.yaml"
+    _write_yaml_call_log(
+        log_path,
+        [{"job_url": "https://example.com/job/1", "total_cost": 0.01, "total_tokens": 10}],
+    )
+
+    calls = {"n": 0}
+    real = ls.yaml.safe_load_all
+
+    def counting(*args, **kwargs):
+        calls["n"] += 1
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(ls.yaml, "safe_load_all", counting)
+
+    job_cost_map(log_path)
+    job_cost_map(log_path)
+    assert calls["n"] == 1  # second call served from cache
+
+    # Appending changes the size → cache invalidated → one more parse.
+    _write_yaml_call_log(
+        log_path,
+        [
+            {"job_url": "https://example.com/job/1", "total_cost": 0.01, "total_tokens": 10},
+            {"job_url": "https://example.com/job/2", "total_cost": 0.02, "total_tokens": 20},
+        ],
+    )
+    job_cost_map(log_path)
+    assert calls["n"] == 2
+    ls._docs_cache.clear()

@@ -264,3 +264,167 @@ def test_rel_to_root_uses_forward_slashes(tmp_path: Path, monkeypatch):
     # Result should use forward slashes (pathlib normalizes)
     assert "/" in result or result == "data/output/resume.pdf"
     assert "\\" not in result
+
+
+# ── Fakes for the tailor_job orchestration test (no real LLM/Playwright) ──
+class _FakeStyleManager:
+    def set_styles_directory(self, d):
+        pass
+
+    def get_styles(self):
+        return {"Default": ("style_default.css", "author")}
+
+
+class _FakeResumeManager:
+    def __init__(self, api_key, style_manager, resume_generator):
+        self.style_manager = style_manager
+        self.selected_style = None
+
+    def choose_style(self):
+        self.selected_style = "Default"
+
+    def choose_default_style(self):
+        self.selected_style = "Default"
+
+    async def pdf_base64(self):
+        import base64
+
+        return base64.b64encode(b"PDFBYTES").decode()
+
+
+class _FakeResumeGenerator:
+    def __init__(self, gpt, anonymizer):
+        self.gpt = gpt
+        self.anonymizer = anonymizer
+
+
+class _FakeGPTAnswerer:
+    instances: list = []
+
+    def __init__(self, api_key=None, proxy=None):
+        self.set_resume_args = None
+        self.set_job_arg = None
+        _FakeGPTAnswerer.instances.append(self)
+
+    def set_resume(self, structured, text):
+        self.set_resume_args = (structured, text)
+
+    def set_job(self, job):
+        self.set_job_arg = job
+
+    def write_cover_letter(self):
+        return "Dear team, [ANON] here."
+
+
+class _FakeAnonymizer:
+    instances: list = []
+
+    def __init__(self, structured):
+        self.resume_anonymized = structured
+        self.deanon_called = False
+        _FakeAnonymizer.instances.append(self)
+
+    def anonymize_personal_information(self):
+        pass
+
+    def anonymize_text(self, text):
+        return text + " [ANON]"
+
+    def deanonymize_text(self, text):
+        self.deanon_called = True
+        return text.replace("[ANON]", "[REAL]")
+
+
+def test_tailor_job_sync_orchestration(tmp_path: Path, monkeypatch):
+    """_tailor_job_sync wires anonymize→LLM→de-anonymize, writes artifacts, persists paths."""
+    import src.dashboard.tailor_service as tsvc
+
+    tracker_service._migrated_paths.clear()
+    _FakeGPTAnswerer.instances.clear()
+    _FakeAnonymizer.instances.clear()
+
+    # Seed a funnel DB with one job.
+    yaml_path = tmp_path / "jobs.yaml"
+    db_path = tmp_path / "funnel.db"
+    _write_yaml_jobs(
+        yaml_path,
+        [
+            {
+                "url": "https://example.com/job/1",
+                "job_title": "Senior Engineer",
+                "company_name": "Acme",
+                "job_description": "Build things",
+            }
+        ],
+    )
+    merge_jobs(yaml_path, db_path)
+
+    # Fake ROOT_DIR / tailored dir + résumé source + secrets.
+    monkeypatch.setattr(tsvc, "ROOT_DIR", tmp_path)
+    monkeypatch.setattr(tsvc, "TAILORED_DIR", tmp_path / "tailored")
+    (tmp_path / ".env").write_text("llm_api_key=test-key\n", encoding="utf-8")
+    resume_dir = tmp_path / "data" / "resumes"
+    resume_dir.mkdir(parents=True)
+    (resume_dir / "resume_text.txt").write_text("Real Name, engineer.", encoding="utf-8")
+    import yaml as _yaml
+
+    (resume_dir / "structured_resume.yaml").write_text(
+        _yaml.safe_dump({"personal_information": {"first_name": "Real"}}),
+        encoding="utf-8",
+    )
+
+    # Swap heavy collaborators for fakes (patched on their source modules, since
+    # tailor_job imports them lazily by name).
+    monkeypatch.setattr("src.job_manager.resume_anonymizer.ResumeAnonymizer", _FakeAnonymizer)
+    monkeypatch.setattr("src.llm.llm_manager.GPTAnswerer", _FakeGPTAnswerer)
+    monkeypatch.setattr("src.resume_builder.resume_generator.ResumeGenerator", _FakeResumeGenerator)
+    monkeypatch.setattr("src.resume_builder.resume_manager.ResumeManager", _FakeResumeManager)
+    monkeypatch.setattr("src.resume_builder.style_manager.StyleManager", _FakeStyleManager)
+
+    try:
+        result = tsvc._tailor_job_sync("https://example.com/job/1", db_path=db_path)
+
+        # Artifacts written under the tailored dir.
+        slug_dir = (tmp_path / "tailored").glob("*")
+        out_dir = next(slug_dir)
+        assert (out_dir / "resume.pdf").read_bytes() == b"PDFBYTES"
+        # Cover letter was de-anonymized on the way out.
+        assert (out_dir / "cover_letter.md").read_text(encoding="utf-8") == (
+            "Dear team, [REAL] here."
+        )
+        assert _FakeAnonymizer.instances[-1].deanon_called is True
+
+        # Résumé text handed to the LLM was anonymized first.
+        structured, text = _FakeGPTAnswerer.instances[-1].set_resume_args
+        assert text.endswith("[ANON]")
+        assert _FakeGPTAnswerer.instances[-1].set_job_arg["company_name"] == "Acme"
+
+        # Paths persisted (ROOT-relative) onto the row and returned.
+        assert result["tailored_resume_path"].startswith("tailored/")
+        assert result["tailored_resume_path"].endswith("/resume.pdf")
+        assert result["tailored_cover_path"].endswith("/cover_letter.md")
+        assert (
+            _fetch_job_row("https://example.com/job/1", db_path)["tailored_resume_path"]
+            == result["tailored_resume_path"]
+        )
+    finally:
+        tracker_service._migrated_paths.clear()
+
+
+def test_tailor_job_sync_raises_jobnotfound_for_unknown_url(tmp_path: Path):
+    """_tailor_job_sync raises JobNotFound (not KeyError) for a missing job."""
+    from src.dashboard.tailor_service import JobNotFound, _tailor_job_sync
+
+    db_path = tmp_path / "funnel.db"
+    yaml_path = tmp_path / "jobs.yaml"
+    _write_yaml_jobs(
+        yaml_path,
+        [{"url": "https://example.com/job/1", "job_title": "A", "job_description": "x"}],
+    )
+    merge_jobs(yaml_path, db_path)
+
+    try:
+        _tailor_job_sync("https://example.com/nope", db_path=db_path)
+        assert False, "Should have raised JobNotFound"
+    except JobNotFound:
+        pass

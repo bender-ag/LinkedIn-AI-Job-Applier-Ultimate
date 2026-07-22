@@ -94,7 +94,7 @@ def parse_job_cards(snapshot: str) -> list[dict]:
         for line in block:
             for m in STATIC_TEXT_RE.finditer(line):
                 text = m.group(1)
-                if text in NOISE_LABELS or NOISE_RE.match(text):
+                if not text.strip() or text in NOISE_LABELS or NOISE_RE.match(text):
                     continue
                 static_texts.append(text)
 

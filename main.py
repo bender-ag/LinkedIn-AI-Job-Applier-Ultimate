@@ -512,20 +512,25 @@ def main() -> None:
             emit_event("run_failed", "Unhandled exception", error=str(e))
         finally:
             logger.info("Program completed")
-            if should_restart:
-                logger.info("Restarting shortly (press Ctrl+C to stop)")
-                # Brief interruptible backoff before reopening the browser.
-                if not asyncio.run(sleep_with_shutdown(browser_restart_backoff_sec)):
-                    logger.info("Shutdown requested during restart backoff")
+            try:
+                if should_restart:
+                    logger.info("Restarting shortly (press Ctrl+C to stop)")
+                    # Brief interruptible backoff before reopening the browser.
+                    if not asyncio.run(sleep_with_shutdown(browser_restart_backoff_sec)):
+                        logger.info("Shutdown requested during restart backoff")
+                        should_exit = True
+                elif RESTART_EVERY_DAY and not should_exit:
+                    logger.info("Waiting 1 hour before next run")
+                    # Make the daily wait interruptible.
+                    if not asyncio.run(sleep_with_shutdown(3600)):
+                        logger.info("Shutdown requested during wait interval")
+                        should_exit = True
+                elif not should_exit:
+                    logger.info("Exiting program")
                     should_exit = True
-            elif RESTART_EVERY_DAY and not should_exit:
-                logger.info("Waiting 1 hour before next run")
-                # Make the daily wait interruptible.
-                if not asyncio.run(sleep_with_shutdown(3600)):
-                    logger.info("Shutdown requested during wait interval")
-                    should_exit = True
-            elif not should_exit:
-                logger.info("Exiting program")
+            except KeyboardInterrupt:
+                # A second Ctrl+C during the wait escalates to an immediate exit.
+                logger.info("Interrupted by user during wait — exiting.")
                 should_exit = True
 
         if should_exit:

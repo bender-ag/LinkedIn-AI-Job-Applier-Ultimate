@@ -165,8 +165,12 @@ def attach_browser_close_watchers(browser: Any) -> None:
 
     Only reacts while the run is still meant to be active (RUNNING/DRAINING); the
     intentional ``browser.close()`` during cleanup also fires "disconnected", and
-    must not be mistaken for a crash.
+    must not be mistaken for a crash. ``browser`` may be None when a persistent
+    context is used instead of a launched browser, in which case there is nothing
+    to watch.
     """
+    if browser is None:
+        return
 
     def on_disconnected() -> None:
         if runtime_controller.shutdown_state in (ShutdownState.RUNNING, ShutdownState.DRAINING):

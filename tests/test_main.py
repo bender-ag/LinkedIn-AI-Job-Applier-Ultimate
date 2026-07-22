@@ -1078,3 +1078,80 @@ class TestMain:
             # Verify completion messages
             mock_logger.info.assert_any_call("Linkedin bot completed successfully")
             mock_logger.info.assert_any_call("Program completed")
+
+
+class TestMainRestartLoop:
+    """The browser-disconnect restart orchestration in main()."""
+
+    def _run_main(self, carb_side_effect):
+        """Drive main() with create_and_run_bot returning the given outcomes.
+
+        Each item is either None (a clean run) or a BrowserClosedError instance
+        (a mid-run disconnect). sleep_with_shutdown is stubbed to return True so
+        the backoff/daily waits complete instantly. Returns the two mocks so the
+        caller can assert on call counts.
+        """
+        from src.utils.runtime_control import ShutdownState, runtime_controller
+
+        runtime_controller.shutdown_requested.clear()
+        runtime_controller.set_shutdown_state(ShutdownState.RUNNING)
+
+        validator = MagicMock()
+        validator.validate_secrets.return_value = {}
+        validator.validate_search_config.return_value = {"positions": []}
+        validator.validate_resume_text.return_value = "resume text"
+        validator.validate_resume_structured.return_value = {"a": 1}
+
+        mock_carb = AsyncMock(side_effect=carb_side_effect)
+        mock_sleep = AsyncMock(return_value=True)
+
+        try:
+            with (
+                patch("main.Path"),
+                patch("main.register_shutdown_handlers"),
+                patch("main.start_keyboard_listener"),
+                patch("main.update_control_state"),
+                patch("main.emit_event"),
+                patch("main.ConfigValidator", return_value=validator),
+                patch("main.create_and_run_bot", mock_carb),
+                patch("main.sleep_with_shutdown", mock_sleep),
+                patch("main.RESTART_EVERY_DAY", False),
+                patch("main.JOB_SITE", "linkedin"),
+            ):
+                main()
+        finally:
+            # Never leak a shutdown/draining state into other tests.
+            runtime_controller.shutdown_requested.clear()
+            runtime_controller.set_shutdown_state(ShutdownState.RUNNING)
+
+        return mock_carb, mock_sleep
+
+    def test_restarts_then_succeeds_on_browser_disconnect(self):
+        from src.utils.runtime_control import BrowserClosedError
+
+        carb, sleep = self._run_main([BrowserClosedError("x"), BrowserClosedError("x"), None])
+        # Two disconnects each trigger a restart, the third run completes cleanly.
+        assert carb.call_count == 3
+        # One interruptible backoff per restart.
+        assert sleep.call_count == 2
+
+    def test_gives_up_after_max_restart_attempts(self):
+        from src.utils.runtime_control import BrowserClosedError
+
+        # Never recovers: 3 restarts, then give up on the 4th disconnect.
+        carb, sleep = self._run_main([BrowserClosedError("x")] * 6)
+        assert carb.call_count == 4
+        assert sleep.call_count == 3
+
+    def test_no_restart_when_shutdown_requested_during_disconnect(self):
+        from src.utils.runtime_control import BrowserClosedError, runtime_controller
+
+        def _crash_then_shutdown(*_args, **_kwargs):
+            # Simulate a disconnect that races with a shutdown request.
+            runtime_controller.request_shutdown("test")
+            raise BrowserClosedError("x")
+
+        carb, sleep = self._run_main(_crash_then_shutdown)
+        # Shutdown wins: exit immediately, no restart attempt.
+        assert carb.call_count == 1
+        assert sleep.call_count == 0

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 from funnel.merge import merge_jobs
@@ -413,3 +414,40 @@ def test_status_counts_with_jobs(tmp_path: Path):
     assert counts["applied"] == 1
     assert counts["interviewing"] == 1
     assert counts["total"] == 3
+
+
+def test_status_counts_total_includes_out_of_vocab_status(tmp_path: Path):
+    """A legacy row with an unexpected status still counts toward total."""
+    yaml_path = tmp_path / "jobs.yaml"
+    db_path = tmp_path / "funnel.db"
+    _write_yaml_jobs(
+        yaml_path,
+        [{"url": "https://example.com/job/1", "job_title": "A", "job_description": "x"}],
+    )
+    merge_jobs(yaml_path, db_path)
+
+    # Write an out-of-vocab status directly (bypassing update_job validation).
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "UPDATE jobs SET status = 'legacy_weird' WHERE url = ?", ("https://example.com/job/1",)
+    )
+    conn.commit()
+    conn.close()
+
+    counts = status_counts(db_path=db_path)
+    assert all(counts[s] == 0 for s in STATUSES)  # not in any known tile
+    assert counts["total"] == 1  # but still counted
+
+
+def test_get_jobs_truncates_long_description(tmp_path: Path):
+    """job_description is truncated server-side for payload size."""
+    yaml_path = tmp_path / "jobs.yaml"
+    db_path = tmp_path / "funnel.db"
+    _write_yaml_jobs(
+        yaml_path,
+        [{"url": "https://example.com/job/1", "job_title": "A", "job_description": "x" * 5000}],
+    )
+    merge_jobs(yaml_path, db_path)
+
+    jobs = get_jobs(db_path=db_path)
+    assert len(jobs[0]["job_description"]) <= 800

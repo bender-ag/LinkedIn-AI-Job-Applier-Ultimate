@@ -99,6 +99,11 @@ def get_jobs(
                 band = match_result.band
                 missing = match_result.missing[:15]
 
+        # The UI only shows a short preview; don't ship multi-KB JDs for every
+        # row. Truncate server-side (after scoring, which needs the full text).
+        jd = job_dict.get("job_description") or ""
+        job_dict["job_description"] = jd[:800]
+
         job_dict["kw_score"] = kw_score
         job_dict["band"] = band
         job_dict["missing"] = missing
@@ -213,5 +218,6 @@ def status_counts(db_path: Path | None = None) -> dict[str, int]:
         conn.close()
 
     result = {status: counts.get(status, 0) for status in STATUSES}
-    result["total"] = sum(result.values())
+    # Total is every job, including any with an out-of-vocab status value.
+    result["total"] = sum(counts.values())
     return result

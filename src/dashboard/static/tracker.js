@@ -9,7 +9,8 @@ const errorMessage = document.getElementById("error-message");
 const jobsTableBody = document.getElementById("jobs-tbody");
 const tableHeadRow = document.querySelector(".tracker-table thead tr");
 
-let allJobs = [];
+let allJobs = []; // master list from the server (never mutated by filtering)
+let displayJobs = []; // filtered/sorted view actually rendered
 let summary = {};
 let currentFilterStatus = null;
 let currentSortColumn = null;
@@ -103,7 +104,7 @@ async function fetchJobs(status = null, search = null) {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
     allJobs = data.jobs || [];
-    renderJobs();
+    filterAndRenderJobs();
   } catch (error) {
     console.error("Failed to fetch jobs:", error);
     showError("Failed to load jobs");
@@ -215,7 +216,7 @@ function populateStatusFilter() {
 function filterAndRenderJobs() {
   const searchTerm = searchInput.value.toLowerCase();
 
-  const filtered = allJobs.filter((job) => {
+  displayJobs = allJobs.filter((job) => {
     const matchesStatus =
       !currentFilterStatus ||
       (job.status === currentFilterStatus ||
@@ -223,14 +224,13 @@ function filterAndRenderJobs() {
 
     const matchesSearch =
       !searchTerm ||
-      job.job_title.toLowerCase().includes(searchTerm) ||
-      job.company_name.toLowerCase().includes(searchTerm) ||
-      job.location.toLowerCase().includes(searchTerm);
+      (job.job_title || "").toLowerCase().includes(searchTerm) ||
+      (job.company_name || "").toLowerCase().includes(searchTerm) ||
+      (job.location || "").toLowerCase().includes(searchTerm);
 
     return matchesStatus && matchesSearch;
   });
 
-  allJobs = filtered;
   renderJobs();
 }
 
@@ -240,7 +240,7 @@ function filterAndRenderJobs() {
 function sortJobs() {
   if (!currentSortColumn) return;
 
-  allJobs.sort((a, b) => {
+  displayJobs.sort((a, b) => {
     let aVal = a[currentSortColumn];
     let bVal = b[currentSortColumn];
 
@@ -279,13 +279,13 @@ function sortJobs() {
 function renderJobs() {
   sortJobs();
 
-  if (allJobs.length === 0) {
+  if (displayJobs.length === 0) {
     jobsTableBody.innerHTML =
       '<tr><td colspan="7" class="tracker-loading">No jobs found</td></tr>';
     return;
   }
 
-  jobsTableBody.innerHTML = allJobs
+  jobsTableBody.innerHTML = displayJobs
     .map((job) => {
       const scoreBadge = getScoreBadgeInfo(job.kw_score, job.band);
       const jobUrl = escapeHtml(job.url);

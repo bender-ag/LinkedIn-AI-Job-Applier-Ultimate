@@ -160,8 +160,14 @@
       line-height: 1.5;
       color: var(--text);
       max-height: 460px;
-      overflow: auto;
-      white-space: pre;
+      overflow-y: auto;
+      /* Wrap long lines (e.g. a big job_description) instead of forcing the
+         block wider than the viewport. min-width:0 lets it shrink inside the
+         grid/flex layout. */
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      min-width: 0;
+      max-width: 100%;
       margin: 0;
     }
 

@@ -328,3 +328,156 @@ def test_event_stream_stops_when_client_disconnects(monkeypatch):
 
     assert len(chunks) == 1
     assert "event: snapshot" in chunks[0]
+
+
+def test_tracker_llm_stats_returns_stats(monkeypatch):
+    """GET /api/tracker/llm-stats returns LLM aggregation."""
+    monkeypatch.setattr(
+        "src.dashboard.server.llm_totals",
+        lambda: {
+            "calls": 5,
+            "total_tokens": 10000,
+            "total_cost": 0.05,
+            "total_time_seconds": 12.5,
+        },
+    )
+
+    response = client.get("/api/tracker/llm-stats")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["calls"] == 5
+    assert body["total_tokens"] == 10000
+    assert body["total_cost"] == 0.05
+    assert body["total_time_seconds"] == 12.5
+
+
+def test_tracker_tailor_job_success(monkeypatch):
+    """POST /api/tracker/jobs/tailor succeeds and calls tailor_job."""
+    from unittest.mock import AsyncMock
+
+    async_mock = AsyncMock(
+        return_value={
+            "url": "https://example.com/job/1",
+            "job_title": "Engineer",
+            "tailored_resume_path": "data/output/tailored/job-1/resume.pdf",
+            "tailored_cover_path": "data/output/tailored/job-1/cover_letter.md",
+        }
+    )
+    monkeypatch.setattr("src.dashboard.server.tailor_job", async_mock)
+
+    response = client.post("/api/tracker/jobs/tailor", json={"url": "https://example.com/job/1"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["url"] == "https://example.com/job/1"
+    assert body["tailored_resume_path"] == "data/output/tailored/job-1/resume.pdf"
+    assert async_mock.called
+    # Verify the URL was passed to tailor_job
+    call_args = async_mock.call_args
+    assert (
+        "https://example.com/job/1" in call_args[0]
+        or call_args.kwargs.get("url") == "https://example.com/job/1"
+    )
+
+
+def test_tracker_tailor_job_returns_404_on_keyerror(monkeypatch):
+    """POST /api/tracker/jobs/tailor returns 404 when tailor_job raises KeyError."""
+    from unittest.mock import AsyncMock
+
+    async_mock = AsyncMock(side_effect=KeyError("Job not found: https://example.com/job/unknown"))
+    monkeypatch.setattr("src.dashboard.server.tailor_job", async_mock)
+
+    response = client.post(
+        "/api/tracker/jobs/tailor", json={"url": "https://example.com/job/unknown"}
+    )
+
+    assert response.status_code == 404
+
+
+def test_tracker_tailor_job_returns_400_on_filenotfound(monkeypatch):
+    """POST /api/tracker/jobs/tailor returns 400 when tailor_job raises FileNotFoundError."""
+    from unittest.mock import AsyncMock
+
+    async_mock = AsyncMock(side_effect=FileNotFoundError("Resume file not found"))
+    monkeypatch.setattr("src.dashboard.server.tailor_job", async_mock)
+
+    response = client.post("/api/tracker/jobs/tailor", json={"url": "https://example.com/job/1"})
+
+    assert response.status_code == 400
+
+
+def test_tracker_tailor_job_returns_400_on_runtimeerror(monkeypatch):
+    """POST /api/tracker/jobs/tailor returns 400 when tailor_job raises RuntimeError."""
+    from unittest.mock import AsyncMock
+
+    async_mock = AsyncMock(side_effect=RuntimeError("No LLM API key configured"))
+    monkeypatch.setattr("src.dashboard.server.tailor_job", async_mock)
+
+    response = client.post("/api/tracker/jobs/tailor", json={"url": "https://example.com/job/1"})
+
+    assert response.status_code == 400
+
+
+def test_tracker_file_blocks_path_traversal(monkeypatch, tmp_path):
+    """GET /api/tracker/file rejects paths outside TAILORED_DIR."""
+    monkeypatch.setattr("src.dashboard.server.ROOT_DIR", tmp_path)
+    monkeypatch.setattr(
+        "src.dashboard.server.TAILORED_DIR", tmp_path / "data" / "output" / "tailored"
+    )
+
+    response = client.get("/api/tracker/file?path=../../etc/passwd")
+
+    assert response.status_code == 400
+
+
+def test_tracker_file_returns_404_for_missing_file(monkeypatch, tmp_path):
+    """GET /api/tracker/file returns 404 when file doesn't exist."""
+    monkeypatch.setattr("src.dashboard.server.ROOT_DIR", tmp_path)
+    monkeypatch.setattr(
+        "src.dashboard.server.TAILORED_DIR", tmp_path / "data" / "output" / "tailored"
+    )
+
+    response = client.get("/api/tracker/file?path=data/output/tailored/job-1/missing.pdf")
+
+    assert response.status_code == 404
+
+
+def test_tracker_file_serves_pdf(monkeypatch, tmp_path):
+    """GET /api/tracker/file serves a PDF file with correct content-type."""
+    root_dir = tmp_path
+    tailored_dir = root_dir / "data" / "output" / "tailored"
+    tailored_dir.mkdir(parents=True, exist_ok=True)
+
+    pdf_file = tailored_dir / "job-1" / "resume.pdf"
+    pdf_file.parent.mkdir(parents=True, exist_ok=True)
+    pdf_file.write_bytes(b"PDF content here")
+
+    monkeypatch.setattr("src.dashboard.server.ROOT_DIR", root_dir)
+    monkeypatch.setattr("src.dashboard.server.TAILORED_DIR", tailored_dir)
+
+    response = client.get("/api/tracker/file?path=data/output/tailored/job-1/resume.pdf")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/pdf"
+    assert response.content == b"PDF content here"
+
+
+def test_tracker_file_serves_markdown(monkeypatch, tmp_path):
+    """GET /api/tracker/file serves a markdown file with correct content-type."""
+    root_dir = tmp_path
+    tailored_dir = root_dir / "data" / "output" / "tailored"
+    tailored_dir.mkdir(parents=True, exist_ok=True)
+
+    md_file = tailored_dir / "job-1" / "cover_letter.md"
+    md_file.parent.mkdir(parents=True, exist_ok=True)
+    md_file.write_text("# Cover Letter\n\nHello!", encoding="utf-8")
+
+    monkeypatch.setattr("src.dashboard.server.ROOT_DIR", root_dir)
+    monkeypatch.setattr("src.dashboard.server.TAILORED_DIR", tailored_dir)
+
+    response = client.get("/api/tracker/file?path=data/output/tailored/job-1/cover_letter.md")
+
+    assert response.status_code == 200
+    assert "text/plain" in response.headers["content-type"]
+    assert response.content == b"# Cover Letter\n\nHello!"

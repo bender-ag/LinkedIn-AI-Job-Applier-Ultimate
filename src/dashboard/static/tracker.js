@@ -3,6 +3,7 @@ const STATUSES = ["new", "interested", "applied", "interviewing", "rejected", "o
 
 // DOM elements
 const statusTilesContainer = document.getElementById("status-tiles");
+const llmStatsContainer = document.getElementById("llm-stats");
 const searchInput = document.getElementById("search-input");
 const statusFilter = document.getElementById("status-filter");
 const errorMessage = document.getElementById("error-message");
@@ -92,6 +93,20 @@ async function fetchSummary() {
 }
 
 /**
+ * Fetch cumulative LLM stats (tailoring is the only LLM cost source)
+ */
+async function fetchLlmStats() {
+  try {
+    const response = await fetch("/api/tracker/llm-stats");
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    renderLlmStats(await response.json());
+  } catch (error) {
+    console.error("Failed to fetch LLM stats:", error);
+    // Non-fatal: the tracker is usable without the stats tiles.
+  }
+}
+
+/**
  * Fetch jobs (always unfiltered from server; all filtering is client-side)
  */
 async function fetchJobs() {
@@ -133,6 +148,66 @@ async function updateJob(url, updates) {
   } catch (error) {
     console.error("Failed to update job:", error);
     showError(`Failed to update job: ${error.message}`);
+  }
+}
+
+/**
+ * Build the résumé / cover-letter links for a tailored job (empty if none)
+ */
+function buildTailorLinks(job) {
+  const links = [];
+  if (job.tailored_resume_path) {
+    links.push(
+      `<a href="/api/tracker/file?path=${encodeURIComponent(job.tailored_resume_path)}" target="_blank" rel="noopener">Résumé PDF</a>`
+    );
+  }
+  if (job.tailored_cover_path) {
+    links.push(
+      `<a href="/api/tracker/file?path=${encodeURIComponent(job.tailored_cover_path)}" target="_blank" rel="noopener">Cover letter</a>`
+    );
+  }
+  return links.join("");
+}
+
+/**
+ * Re-open (and scroll to) a job's expand row after a re-render
+ */
+function reopenRow(url) {
+  const expandRow = document.querySelector(
+    `.expand-row[data-url="${CSS.escape(url)}"]`
+  );
+  if (expandRow) {
+    expandRow.classList.add("open");
+    expandRow.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+}
+
+/**
+ * Generate a tailored résumé + cover letter for a job
+ */
+async function tailorJob(url, btn) {
+  btn.disabled = true;
+  const original = btn.textContent;
+  btn.textContent = "Tailoring… (up to a minute)";
+  try {
+    const response = await fetch("/api/tracker/jobs/tailor", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${response.status}`);
+    }
+    // Refresh cost tiles + rows, then re-open the row so links are visible.
+    await fetchLlmStats();
+    await fetchJobs();
+    reopenRow(url);
+  } catch (error) {
+    console.error("Tailoring failed:", error);
+    showError(`Tailoring failed: ${error.message}`);
+    btn.disabled = false;
+    btn.textContent = original;
   }
 }
 
@@ -188,6 +263,33 @@ function renderStatusTiles() {
   totalTile.appendChild(totalLabel);
   totalTile.appendChild(totalCount);
   statusTilesContainer.appendChild(totalTile);
+}
+
+/**
+ * Render LLM stat tiles (cumulative tailoring usage)
+ */
+function renderLlmStats(stats) {
+  const tiles = [
+    ["Tailor Calls", stats.calls ?? 0],
+    ["Tailor Cost", `$${(stats.total_cost ?? 0).toFixed(4)}`],
+    ["Tokens", (stats.total_tokens ?? 0).toLocaleString()],
+    ["LLM Time", `${(stats.total_time_seconds ?? 0).toFixed(1)}s`],
+  ];
+
+  llmStatsContainer.innerHTML = "";
+  tiles.forEach(([label, value]) => {
+    const tile = document.createElement("div");
+    tile.className = "stat-tile";
+    const l = document.createElement("span");
+    l.className = "stat-tile-label";
+    l.textContent = label;
+    const v = document.createElement("span");
+    v.className = "stat-tile-value";
+    v.textContent = value;
+    tile.appendChild(l);
+    tile.appendChild(v);
+    llmStatsContainer.appendChild(tile);
+  });
 }
 
 /**
@@ -338,6 +440,13 @@ function renderJobs() {
                     }
                   </div>
                 </div>
+                <div class="expand-section tailor-section">
+                  <button class="tailor-btn" data-url="${jobUrl}">
+                    ${job.tailored_resume_path ? "Re-tailor" : "Tailor résumé + cover"}
+                  </button>
+                  <span class="tailor-links">${buildTailorLinks(job)}</span>
+                  ${job.tailor_cost ? `<span class="tailor-cost">$${Number(job.tailor_cost).toFixed(4)}</span>` : ""}
+                </div>
                 <div class="job-description-preview">${escapeHtml((job.job_description || "").substring(0, 600))}</div>
               </div>
             </div>
@@ -396,6 +505,14 @@ function attachJobEventListeners() {
       const url = e.target.dataset.url;
       const appliedDate = e.target.value;
       await updateJob(url, { applied_date: appliedDate });
+    });
+  });
+
+  // Tailor button
+  document.querySelectorAll(".tailor-btn").forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      await tailorJob(btn.dataset.url, btn);
     });
   });
 }
@@ -463,6 +580,7 @@ async function init() {
 
   // Load data
   await fetchSummary();
+  await fetchLlmStats();
   await fetchJobs();
 
   // Update sort indicators

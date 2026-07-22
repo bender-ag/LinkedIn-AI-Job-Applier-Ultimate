@@ -836,6 +836,26 @@ class TestAsyncTelegramSink:
                 mock_logger.error.assert_called()
 
 
+def _tg_token_available() -> bool:
+    """True when a Telegram bot token is configured in .env.
+
+    ``get_telegram_chat_and_topic_id`` reads ``.env["tg_token"]`` at *import* time,
+    so these tests cannot run on a clean clone / CI where no ``.env`` exists. Gate
+    them on token availability rather than fail the whole suite (Telegram is
+    optional for the funnel).
+    """
+    try:
+        import dotenv
+
+        return bool(dotenv.dotenv_values(".env").get("tg_token"))
+    except Exception:
+        return False
+
+
+@pytest.mark.skipif(
+    not _tg_token_available(),
+    reason="needs tg_token in .env; skipped on clean clone / CI",
+)
 class TestGetTelegramChatAndTopicId:
     """Tests for get_telegram_chat_and_topic_id.py module"""
 

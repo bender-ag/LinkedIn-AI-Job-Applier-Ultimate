@@ -207,3 +207,83 @@ def test_start_sweep_marks_row_failed_on_popen_error(monkeypatch, tmp_path):
     # The inserted row must be finalized, not left 'running'.
     assert ss.get_sweeps(db_path)[0]["status"] == "failed"
     tracker_service._migrated_paths.clear()
+
+
+# ── sweep health assessment (dashboard heartbeat) ──
+from datetime import datetime, timedelta, timezone  # noqa: E402
+
+_NOW = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
+
+
+def _health_status(latest=None, running=False):
+    return {"running": running, "latest": latest}
+
+
+def _sweep_row(status="done", collected=5, new_count=3, hours_ago=1.0):
+    return {
+        "status": status,
+        "collected": collected,
+        "new_count": new_count,
+        "finished_at": (_NOW - timedelta(hours=hours_ago)).isoformat(),
+    }
+
+
+def test_health_running():
+    h = ss.assess_sweep_health(_health_status(running=True), now=_NOW)
+    assert h["state"] == "running"
+    assert h["level"] == "idle"
+
+
+def test_health_never_when_no_sweep():
+    h = ss.assess_sweep_health(_health_status(latest=None), now=_NOW)
+    assert h["state"] == "never"
+    assert h["level"] == "idle"
+
+
+def test_health_ok_for_recent_successful_sweep():
+    h = ss.assess_sweep_health(_health_status(latest=_sweep_row()), now=_NOW)
+    assert h["state"] == "ok"
+    assert h["level"] == "ok"
+    assert h["collected"] == 5
+    assert h["new_count"] == 3
+
+
+def test_health_empty_when_zero_collected():
+    h = ss.assess_sweep_health(
+        _health_status(latest=_sweep_row(collected=0, new_count=0)), now=_NOW
+    )
+    assert h["state"] == "empty"
+    assert h["level"] == "warn"
+
+
+def test_health_stale_when_last_success_is_old():
+    h = ss.assess_sweep_health(
+        _health_status(latest=_sweep_row(hours_ago=30)), now=_NOW, stale_after_hours=26
+    )
+    assert h["state"] == "stale"
+    assert h["level"] == "warn"
+
+
+def test_health_failed():
+    h = ss.assess_sweep_health(_health_status(latest=_sweep_row(status="failed")), now=_NOW)
+    assert h["state"] == "failed"
+    assert h["level"] == "error"
+
+
+def test_health_stopped_is_idle():
+    h = ss.assess_sweep_health(_health_status(latest=_sweep_row(status="stopped")), now=_NOW)
+    assert h["state"] == "stopped"
+    assert h["level"] == "idle"
+
+
+def test_health_age_uses_naive_local_default_now():
+    # Regression: sweep timestamps are naive-local (runtime._now_iso), so the
+    # DEFAULT `now` must be naive-local too — otherwise a fresh sweep reads the
+    # UTC offset ("5h ago") instead of ~just-now. Exercises the default path (no
+    # `now` passed), unlike the tz-aware cases above.
+    finished = datetime.now().isoformat(timespec="seconds")
+    latest = {"status": "done", "collected": 7, "new_count": 2, "finished_at": finished}
+    h = ss.assess_sweep_health({"running": False, "latest": latest})
+    assert h["state"] == "ok"
+    assert h["age_hours"] is not None
+    assert h["age_hours"] < 0.1  # ~just now, not a whole-hour timezone offset

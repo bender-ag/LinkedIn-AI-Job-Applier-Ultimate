@@ -45,6 +45,7 @@ from src.dashboard.runtime import (
 from src.dashboard.sweep_service import (
     BridgeUnavailable,
     SweepAlreadyRunning,
+    assess_sweep_health,
     get_sweep_status,
     get_sweeps,
     start_sweep,
@@ -372,8 +373,10 @@ def tracker_file(path: str = Query(...)) -> Response:
 
 @app.get("/api/tracker/sweep")
 def tracker_sweep_status() -> JSONResponse:
-    """Current sweep process state + latest sweep row."""
-    return JSONResponse(get_sweep_status())
+    """Current sweep process state + latest sweep row + health assessment."""
+    status = get_sweep_status()
+    status["health"] = assess_sweep_health(status)
+    return JSONResponse(status)
 
 
 @app.get("/api/tracker/sweeps")

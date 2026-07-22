@@ -28,6 +28,7 @@ import signal
 import sqlite3
 import subprocess
 import threading
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -259,6 +260,91 @@ def get_sweep_status(db_path: Path | None = None) -> dict[str, Any]:
         "sweep_id": info.get("sweep_id"),
         "started_at": info.get("started_at"),
         "latest": latest[0] if latest else None,
+    }
+
+
+def _hours_since(iso: str | None, now: datetime) -> float | None:
+    """Hours between an ISO timestamp and ``now`` (None if unparseable).
+
+    Sweep timestamps are written by ``runtime._now_iso`` as *naive local* time, so
+    the default ``now`` is naive local too. If the two ever disagree on tz-awareness
+    (e.g. a caller passes an aware ``now``), compare on wall-clock to avoid a bogus
+    offset.
+    """
+    if not iso:
+        return None
+    try:
+        dt = datetime.fromisoformat(iso)
+    except ValueError:
+        return None
+    if (dt.tzinfo is None) != (now.tzinfo is None):
+        dt = dt.replace(tzinfo=None)
+        now = now.replace(tzinfo=None)
+    return (now - dt).total_seconds() / 3600.0
+
+
+def assess_sweep_health(
+    status: dict[str, Any],
+    *,
+    stale_after_hours: float = 26.0,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Classify sweep health for the dashboard heartbeat.
+
+    Pure function over the ``get_sweep_status`` dict so a *broken* sweep (failed,
+    logged-out/blocked → 0 collected, or none in a day) is visibly distinct from a
+    healthy quiet one. ``level`` drives the frontend colour: ok / warn / error /
+    idle. ``now`` is injectable for testing.
+    """
+    if now is None:
+        now = datetime.now()  # naive local, matching runtime._now_iso
+
+    if status.get("running"):
+        return {"state": "running", "level": "idle", "message": "Sweep running…"}
+
+    latest = status.get("latest")
+    if not latest:
+        return {"state": "never", "level": "idle", "message": "No sweep has run yet."}
+
+    st = (latest.get("status") or "").lower()
+    collected = latest.get("collected")
+    new_count = latest.get("new_count")
+    finished_at = latest.get("finished_at")
+    age_hours = _hours_since(finished_at, now)
+    base = {
+        "finished_at": finished_at,
+        "collected": collected,
+        "new_count": new_count,
+        "age_hours": age_hours,
+    }
+
+    if st == "failed":
+        return {**base, "state": "failed", "level": "error", "message": "Last sweep failed."}
+    if st == "stopped":
+        return {**base, "state": "stopped", "level": "idle", "message": "Last sweep was stopped."}
+    if st == "done":
+        if collected == 0:
+            return {
+                **base,
+                "state": "empty",
+                "level": "warn",
+                "message": "Last sweep collected 0 jobs — check the research browser is "
+                "logged in and not blocked.",
+            }
+        if age_hours is not None and age_hours > stale_after_hours:
+            return {
+                **base,
+                "state": "stale",
+                "level": "warn",
+                "message": f"No successful sweep in {int(age_hours)}h.",
+            }
+        return {**base, "state": "ok", "level": "ok", "message": "Healthy."}
+
+    return {
+        **base,
+        "state": st or "unknown",
+        "level": "idle",
+        "message": f"Last sweep: {st or 'unknown'}.",
     }
 
 

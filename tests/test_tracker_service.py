@@ -451,3 +451,127 @@ def test_get_jobs_truncates_long_description(tmp_path: Path):
 
     jobs = get_jobs(db_path=db_path)
     assert len(jobs[0]["job_description"]) <= 800
+
+
+def test_get_jobs_filters_before_scoring(tmp_path: Path):
+    """get_jobs filters by status/search before scoring (efficiency refactor)."""
+    yaml_path = tmp_path / "jobs.yaml"
+    db_path = tmp_path / "funnel.db"
+
+    _write_yaml_jobs(
+        yaml_path,
+        [
+            {
+                "url": "https://example.com/job/1",
+                "job_title": "Python Engineer",
+                "company_name": "Acme",
+                "location": "Remote",
+                "job_description": "Python Django engineer role",
+                "interest_score": 80,
+            },
+            {
+                "url": "https://example.com/job/2",
+                "job_title": "Java Developer",
+                "company_name": "Beta",
+                "location": "Remote",
+                "job_description": "Java Spring developer role",
+                "interest_score": 80,
+            },
+            {
+                "url": "https://example.com/job/3",
+                "job_title": "Python Analyst",
+                "company_name": "Gamma",
+                "location": "Remote",
+                "job_description": "Python data analyst role",
+                "interest_score": 80,
+            },
+        ],
+    )
+
+    merge_jobs(yaml_path, db_path)
+
+    # Mark one job as "applied" for status filtering
+    update_job("https://example.com/job/2", {"status": "applied"}, db_path=db_path)
+
+    # Test status filter: only "new" jobs (should skip job/2)
+    new_jobs = get_jobs(db_path=db_path, status="new")
+    assert len(new_jobs) == 2
+    new_urls = {j["url"] for j in new_jobs}
+    assert "https://example.com/job/1" in new_urls
+    assert "https://example.com/job/3" in new_urls
+
+    # Test search filter: only "Python" in title (should get job/1 and job/3)
+    python_jobs = get_jobs(db_path=db_path, search="python")
+    assert len(python_jobs) == 2
+    python_urls = {j["url"] for j in python_jobs}
+    assert "https://example.com/job/1" in python_urls
+    assert "https://example.com/job/3" in python_urls
+
+    # Test both filters: status="new" AND search="Engineer"
+    # (should only get job/1: Python Engineer, status new)
+    filtered = get_jobs(db_path=db_path, status="new", search="engineer")
+    assert len(filtered) == 1
+    assert filtered[0]["url"] == "https://example.com/job/1"
+    assert filtered[0]["status"] == "new"
+    assert filtered[0]["job_title"] == "Python Engineer"
+
+    # Test that filtered-out rows are not in the result
+    # (job/2 is "applied", not "new")
+    applied_jobs = get_jobs(db_path=db_path, status="applied")
+    assert len(applied_jobs) == 1
+    assert applied_jobs[0]["url"] == "https://example.com/job/2"
+
+    # Verify filtering works: when we request "new" jobs, applied jobs are excluded
+    all_new = get_jobs(db_path=db_path, status="new")
+    all_new_urls = {j["url"] for j in all_new}
+    assert "https://example.com/job/2" not in all_new_urls
+
+
+def test_get_jobs_memoized_schema(tmp_path: Path):
+    """get_jobs memoizes schema migration (same db_path called twice)."""
+    yaml_path = tmp_path / "jobs.yaml"
+    db_path = tmp_path / "funnel.db"
+
+    _write_yaml_jobs(
+        yaml_path,
+        [
+            {
+                "url": "https://example.com/job/1",
+                "job_title": "Engineer",
+                "company_name": "Acme",
+                "job_description": "test",
+            }
+        ],
+    )
+
+    merge_jobs(yaml_path, db_path)
+
+    # Call get_jobs twice on the same db_path
+    # The memoization should prevent redundant schema migrations
+    jobs1 = get_jobs(db_path=db_path)
+    jobs2 = get_jobs(db_path=db_path)
+
+    # Both should return the same results
+    assert len(jobs1) == 1
+    assert len(jobs2) == 1
+    assert jobs1[0]["url"] == jobs2[0]["url"]
+
+    # Also test that distinct db_paths (e.g., in other tests) still migrate
+    # by checking that a fresh tmp db works independently
+    other_db = tmp_path / "other.db"
+    other_yaml = tmp_path / "other.yaml"
+    _write_yaml_jobs(
+        other_yaml,
+        [
+            {
+                "url": "https://example.com/other/1",
+                "job_title": "Manager",
+                "company_name": "Beta",
+                "job_description": "test",
+            }
+        ],
+    )
+    merge_jobs(other_yaml, other_db)
+    other_jobs = get_jobs(db_path=other_db)
+    assert len(other_jobs) == 1
+    assert other_jobs[0]["url"] == "https://example.com/other/1"

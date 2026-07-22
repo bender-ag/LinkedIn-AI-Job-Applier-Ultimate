@@ -92,15 +92,11 @@ async function fetchSummary() {
 }
 
 /**
- * Fetch jobs with optional filters
+ * Fetch jobs (always unfiltered from server; all filtering is client-side)
  */
-async function fetchJobs(status = null, search = null) {
+async function fetchJobs() {
   try {
-    const params = new URLSearchParams();
-    if (status) params.append("status", status);
-    if (search) params.append("search", search);
-
-    const response = await fetch(`/api/tracker/jobs?${params}`);
+    const response = await fetch("/api/tracker/jobs");
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
     allJobs = data.jobs || [];
@@ -133,7 +129,7 @@ async function updateJob(url, updates) {
     const updated = await response.json();
     // Refresh summary and jobs after update
     await fetchSummary();
-    await fetchJobs(currentFilterStatus, searchInput.value);
+    await fetchJobs();
   } catch (error) {
     console.error("Failed to update job:", error);
     showError(`Failed to update job: ${error.message}`);

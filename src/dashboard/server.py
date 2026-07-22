@@ -276,7 +276,7 @@ async def stream_events(
 
 
 @app.get("/api/tracker/jobs")
-async def tracker_jobs(
+def tracker_jobs(
     status: str | None = Query(default=None),
     search: str | None = Query(default=None),
 ) -> JSONResponse:
@@ -285,7 +285,7 @@ async def tracker_jobs(
 
 
 @app.patch("/api/tracker/jobs")
-async def update_tracker_job(payload: UpdateJobPayload) -> JSONResponse:
+def update_tracker_job(payload: UpdateJobPayload) -> JSONResponse:
     try:
         fields = {}
         if payload.status is not None:
@@ -304,5 +304,5 @@ async def update_tracker_job(payload: UpdateJobPayload) -> JSONResponse:
 
 
 @app.get("/api/tracker/summary")
-async def tracker_summary() -> JSONResponse:
+def tracker_summary() -> JSONResponse:
     return JSONResponse(status_counts())

@@ -14,6 +14,24 @@ from src.dashboard.runtime import ROOT_DIR
 DB_PATH = ROOT_DIR / "data" / "funnel.db"
 RESUME_PATH = ROOT_DIR / "data" / "resumes" / "resume_text.txt"
 
+# Module-level memoization: migrate schema once per db_path per process.
+# Distinct tmp db paths (tests) each migrate once.
+_migrated_paths: set[str] = set()
+
+
+def _ensure_schema_once(conn: sqlite3.Connection, db_path: Path) -> None:
+    """
+    Ensure schema is migrated, but only once per db_path.
+
+    Uses a module-level memo to avoid repeated PRAGMA and CREATE statements.
+    """
+    key = str(db_path)
+    if key in _migrated_paths:
+        return
+    ensure_schema(conn)
+    _migrated_paths.add(key)
+
+
 STATUSES = [
     "new",
     "interested",
@@ -71,7 +89,7 @@ def get_jobs(
 
     try:
         # Ensure schema is migrated before querying
-        ensure_schema(conn)
+        _ensure_schema_once(conn, db_path)
         cursor = conn.execute("SELECT * FROM jobs")
         rows = cursor.fetchall()
     finally:
@@ -87,7 +105,21 @@ def get_jobs(
         # Normalize status: NULL -> "new"
         job_dict["status"] = job_dict.get("status") or "new"
 
-        # Compute kw_score, band, missing
+        # Apply filters first (before scoring)
+        if status and job_dict["status"] != status:
+            continue
+
+        if search:
+            search_lower = search.lower()
+            found = (
+                search_lower in (job_dict.get("job_title") or "").lower()
+                or search_lower in (job_dict.get("company_name") or "").lower()
+                or search_lower in (job_dict.get("location") or "").lower()
+            )
+            if not found:
+                continue
+
+        # Compute kw_score, band, missing (only for rows that pass filters)
         kw_score = None
         band = ""
         missing = []
@@ -107,20 +139,6 @@ def get_jobs(
         job_dict["kw_score"] = kw_score
         job_dict["band"] = band
         job_dict["missing"] = missing
-
-        # Apply filters
-        if status and job_dict["status"] != status:
-            continue
-
-        if search:
-            search_lower = search.lower()
-            found = (
-                search_lower in (job_dict.get("job_title") or "").lower()
-                or search_lower in (job_dict.get("company_name") or "").lower()
-                or search_lower in (job_dict.get("location") or "").lower()
-            )
-            if not found:
-                continue
 
         jobs.append(job_dict)
 
@@ -166,7 +184,7 @@ def update_job(
 
     try:
         # Ensure schema is migrated before querying
-        ensure_schema(conn)
+        _ensure_schema_once(conn, db_path)
         # Check if job exists
         existing = conn.execute("SELECT url FROM jobs WHERE url = ?", (url,)).fetchone()
         if not existing:
@@ -207,7 +225,7 @@ def status_counts(db_path: Path | None = None) -> dict[str, int]:
 
     try:
         # Ensure schema is migrated before querying
-        ensure_schema(conn)
+        _ensure_schema_once(conn, db_path)
         cursor = conn.execute("""
             SELECT COALESCE(status, 'new') as status, COUNT(*) as cnt
             FROM jobs

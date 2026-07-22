@@ -77,7 +77,7 @@ function truncateText(value, maxLength = 120) {
 }
 
 function currentRunPath(runId) {
-  return runId ? `/runs/${encodeURIComponent(runId)}` : "/";
+  return runId ? `/runs/${encodeURIComponent(runId)}` : "/ops";
 }
 
 function syncUrlForRun(runId) {

@@ -102,8 +102,9 @@ Possible values:
     - "Modern Grey"
     - "Default"
     - "Clean Blue"
+    - "Demetrio"   # custom pixel-accurate style (src/resume_builder/resume_style/style_demetrio.css)
 """
-RESUME_STYLE = None
+RESUME_STYLE = "Demetrio"
 
 """
 If LLM evaluated the 'interest' level of the job not below this threshold - the job is considered interesting for application.

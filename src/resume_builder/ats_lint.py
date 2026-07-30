@@ -102,7 +102,8 @@ def _header_expected(texts: dict[str, str], header: str) -> bool:
 
 
 def _find_split_header_form(text: str, header: str) -> str | None:
-    pattern = r"\s*".join(re.escape(char) for char in header)
+    # Horizontal whitespace only — a match spanning lines would just be unrelated letters.
+    pattern = r"[^\S\n]*".join(re.escape(char) for char in header)
     match = re.search(pattern, text, re.IGNORECASE)
     if match:
         return match.group(0)
